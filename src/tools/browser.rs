@@ -24,6 +24,7 @@ static BROWSER: std::sync::LazyLock<Mutex<Option<BrowserState>>> =
 struct BrowserState {
     _browser: Browser,
     current_page: Page,
+    #[allow(dead_code)]
     is_headless: bool,
 }
 
@@ -71,11 +72,6 @@ async fn get_page() -> Result<Page, String> {
         Some(state) => Ok(state.current_page.clone()),
         None => Err("Browser not launched. Call browser_launch first.".into()),
     }
-}
-
-/// helper: anyhow Result → Result<T, String>
-fn ok<T>(r: Result<T>) -> Result<T, String> {
-    r.map_err(|e| format!("{e}"))
 }
 
 // ═══════════════════ TOOL HANDLERS ═══════════════════

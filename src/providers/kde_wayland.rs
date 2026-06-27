@@ -7,8 +7,6 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
-use image::GenericImageView;
-
 use super::*;
 
 // ── Linux input key codes ─────────────────────────────────────

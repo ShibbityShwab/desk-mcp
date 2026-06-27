@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 /// Represents a JSON-RPC 2.0 request or notification
 #[derive(Debug, serde::Deserialize)]
 struct JsonRpcRequest {
+    #[allow(dead_code)]
     jsonrpc: String,
     #[serde(default)]
     id: Option<Value>,
@@ -24,6 +25,7 @@ struct JsonRpcRequest {
 /// JSON-RPC 2.0 response
 #[derive(Debug, serde::Serialize)]
 struct JsonRpcResponse {
+    #[allow(dead_code)]
     jsonrpc: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<Value>,
@@ -37,12 +39,6 @@ struct JsonRpcResponse {
 struct JsonRpcError {
     code: i32,
     message: String,
-}
-
-#[derive(Debug, Clone)]
-struct ServerInfo {
-    name: String,
-    version: String,
 }
 
 /// Read a complete JSON-RPC message from a buffered reader.
