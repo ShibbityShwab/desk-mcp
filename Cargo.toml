@@ -2,7 +2,7 @@
 name = "desk-mcp"
 version = "0.1.0"
 edition = "2021"
-description = "DeskMCP — full agentic desktop control MCP server for Linux. Screenshots, mouse, keyboard, OCR, window management, clipboard, shell, and Chrome CDP browser automation. CPU-only, dual-mode (KDE Wayland + headless). 42 tools."
+description = "DeskMCP — full agentic desktop control MCP server for Linux. Screenshots, mouse, keyboard, OCR, window management, clipboard, shell, code execution, filesystem, and Chrome CDP browser automation. CPU-only, dual-mode (KDE Wayland + headless). 50 tools."
 license = "MIT"
 repository = "https://github.com/ShibbityShwab/desk-mcp"
 

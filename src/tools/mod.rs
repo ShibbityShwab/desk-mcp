@@ -1,10 +1,11 @@
-//! Tool registry — defines all 42 MCP tools with JSON schemas.
+//! Tool registry — defines all 50 MCP tools with JSON schemas.
 //!
 //! Each tool is registered with a name, description, and JSON Schema input spec.
 //! The `dispatch` function routes tool calls to the appropriate handler.
 
 pub mod computer;
 pub mod browser;
+pub mod code;
 
 use crate::response::ToolResponse;
 use serde::Serialize;
@@ -157,6 +158,31 @@ pub fn all_tools() -> Vec<ToolDef> {
     t("browser_console", "Get recent browser console messages.",
       r#"{"type":"object","properties":{"limit":{"type":"integer","default":50,"minimum":1,"maximum":500}}}"#);
 
+    // ═══════════════ CODE MODE (8 tools) ═══════════════
+    t("file_read", "Read file contents with line numbers. Supports offset and limit for large files.",
+      r#"{"type":"object","required":["path"],"properties":{"path":{"type":"string","description":"Absolute or workspace-relative path"},"offset":{"type":"integer","default":0},"limit":{"type":"integer","minimum":1,"maximum":10000}}}"#);
+
+    t("file_write", "Create or overwrite a file. Creates parent directories as needed.",
+      r#"{"type":"object","required":["path","content"],"properties":{"path":{"type":"string","description":"Absolute or workspace-relative path"},"content":{"type":"string"}}}"#);
+
+    t("file_edit", "Perform exact string replacements in a file. Returns error if old_string is not unique (unless replace_all=true).",
+      r#"{"type":"object","required":["path","old_string","new_string"],"properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"},"replace_all":{"type":"boolean","default":false}}}"#);
+
+    t("grep", "Search file contents using regex patterns. Uses ripgrep if available, grep otherwise.",
+      r#"{"type":"object","required":["pattern"],"properties":{"pattern":{"type":"string","description":"Regex pattern to search for"},"path":{"type":"string","default":"."},"case_insensitive":{"type":"boolean","default":false},"glob":{"type":"string","description":"File filter e.g. '*.rs'"}}}"#);
+
+    t("glob", "Find files matching a glob pattern. Returns sorted by modification time (newest first), max 100 results.",
+      r#"{"type":"object","required":["pattern"],"properties":{"pattern":{"type":"string","description":"Glob pattern e.g. '**/*.rs'"},"path":{"type":"string","default":"."}}}"#);
+
+    t("code_run", "Execute a code snippet. Requires ALLOW_CODE=1. Supports: python, bash, node, ruby, perl, php.",
+      r#"{"type":"object","required":["language","code"],"properties":{"language":{"type":"string","enum":["python","py","bash","sh","node","javascript","js","ruby","rb","perl","pl","php"]},"code":{"type":"string"},"timeout":{"type":"integer","default":30,"minimum":1,"maximum":300},"cwd":{"type":"string","description":"Working directory (optional)"}}}"#);
+
+    t("code_lint", "Run a linter on a file and return diagnostics. Supported: .rs (clippy), .py (ruff), .js/.ts (eslint), .sh (shellcheck), .go (go vet).",
+      r#"{"type":"object","required":["path"],"properties":{"path":{"type":"string"}}}"#);
+
+    t("code_build", "Run a build command in a project directory. Auto-detects: cargo, npm, make, go, python.",
+      r#"{"type":"object","required":["path"],"properties":{"path":{"type":"string","description":"Project directory path"},"command":{"type":"string","default":"auto","description":"Custom build command or 'auto'"},"timeout":{"type":"integer","default":120,"minimum":5,"maximum":300}}}"#);
+
     // ═══════════════ DISCOVERY & STATUS (2 tools) ═══════════════
     t("discover", "Report all detected capabilities: display type, tools, browsers, environment.",
       r#"{"type":"object","properties":{}}"#);
@@ -191,6 +217,12 @@ pub async fn dispatch(name: &str, args: serde_json::Value) -> ToolResponse {
         | "browser_download" | "browser_upload" | "browser_cookies"
         | "browser_console" => {
             browser::handle(name, args).await
+        }
+
+        // Code mode
+        "file_read" | "file_write" | "file_edit" | "grep" | "glob"
+        | "code_run" | "code_lint" | "code_build" => {
+            code::handle(name, args).await
         }
 
         // Discovery & status

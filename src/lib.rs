@@ -1,12 +1,12 @@
 //! DeskMCP — Full Agentic Desktop Control MCP Server for Linux
 //!
 //! Single MCP server providing agentic control of a Linux system.
-//! CPU-only, dual-mode: personal desktop + headless server.
+//! CPU-only, triple-mode: computer use + browser automation + code tools.
 //!
 //! ## Architecture
 //! - `providers/`  → Platform backends (KDE Wayland, headless)
 //! - `discovery.rs` → Auto-detects environment at startup
-//! - `tools/`       → All 42 tool implementations
+//! - `tools/`       → All 50 tool implementations (computer, browser, code)
 //! - `response.rs`  → Unified `{ok, result, error}` contract
 
 pub mod discovery;
