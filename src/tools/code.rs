@@ -465,7 +465,7 @@ async fn code_run(args: Value) -> Result<Value, String> {
 }
 
 async fn code_lint(args: Value) -> Result<Value, String> {
-    let path_str = args["path"].as_str().ok_or("Missing 'path'")?;
+    let path_str = args["path"].as_str().or(args["file"].as_str()).ok_or("Missing 'path'")?;
     let path = resolve_safe(path_str)?;
 
     let ext = path.extension()

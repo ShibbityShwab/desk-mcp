@@ -328,7 +328,7 @@ async fn handle_inner(name: &str, args: Value) -> Result<Value, (String, String)
         }
 
         "open_app" => {
-            let name = args["name"].as_str().unwrap_or("");
+            let name = args["name"].as_str().or(args["app"].as_str()).unwrap_or("");
             map_err!(p.open_app(name), "open_app failed: {0}")?;
             Ok(serde_json::json!({"launched": name}))
         }

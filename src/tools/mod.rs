@@ -98,7 +98,7 @@ pub fn all_tools() -> Vec<ToolDef> {
       r#"{"type":"object","properties":{}}"#);
 
     t("open_app", "Launch or focus an application by name.",
-      r#"{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}"#);
+      r#"{"type":"object","required":["name"],"properties":{"name":{"type":"string"},"app":{"type":"string"}}}"#);
 
     t("notify", "Send a desktop notification.",
       r#"{"type":"object","required":["title","message"],"properties":{"title":{"type":"string"},"message":{"type":"string"},"urgency":{"type":"string","enum":["low","normal","critical"],"default":"normal"}}}"#);
