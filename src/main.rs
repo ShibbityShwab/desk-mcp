@@ -192,37 +192,41 @@ async fn main() {
         "environment detected"
     );
 
-    // Channel for incoming messages
-    let (tx, mut rx) = mpsc::channel::<String>(256);
+    // Main loop: re-establish stdin reader when parent reconnects
+    loop {
+        let (tx, mut rx) = mpsc::channel::<String>(256);
 
-    // Spawn stdin reader
-    let stdin = std::io::stdin();
-    std::thread::spawn(move || {
-        let mut reader = std::io::BufReader::new(stdin.lock());
-        while let Some(msg) = read_message(&mut reader) {
-            if tx.blocking_send(msg).is_err() {
-                break; // Receiver closed
+        // Spawn stdin reader
+        let stdin = std::io::stdin();
+        std::thread::spawn(move || {
+            let mut reader = std::io::BufReader::new(stdin.lock());
+            while let Some(msg) = read_message(&mut reader) {
+                if tx.blocking_send(msg).is_err() {
+                    break; // Receiver closed
+                }
+            }
+        });
+
+        // Process messages
+        while let Some(msg) = rx.recv().await {
+            let request: JsonRpcRequest = match serde_json::from_str(&msg) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::warn!("invalid JSON-RPC: {e}");
+                    continue;
+                }
+            };
+
+            tracing::debug!(method = request.method, "received request");
+
+            let response = handle_request(request).await;
+            if let Some(resp) = response {
+                write_message(&resp);
             }
         }
-    });
 
-    // Process messages
-    while let Some(msg) = rx.recv().await {
-        let request: JsonRpcRequest = match serde_json::from_str(&msg) {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("invalid JSON-RPC: {e}");
-                continue;
-            }
-        };
-
-        tracing::debug!(method = request.method, "received request");
-
-        let response = handle_request(request).await;
-        if let Some(resp) = response {
-            write_message(&resp);
-        }
+        // stdin EOF — parent may reconnect; short sleep then retry
+        tracing::debug!("stdin closed, waiting for reconnect...");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
-
-    tracing::info!("MCP server shutting down");
 }
