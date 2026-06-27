@@ -165,7 +165,7 @@ async fn handle_request(req: JsonRpcRequest) -> Option<JsonRpcResponse> {
     }
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread", worker_threads = 4)]
 async fn main() {
     // Initialize tracing
     tracing_subscriber::fmt()

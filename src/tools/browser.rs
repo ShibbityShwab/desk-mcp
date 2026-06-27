@@ -136,16 +136,90 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
 
     // Launch headless
     if mode == "auto" || mode == "headless" {
-        let config = BrowserConfig::builder()
+        // Pick the first installed browser from discovery. chromiumoxide's
+        // own default-detection looks for `chromium`, `chromium-browser`,
+        // `google-chrome` — but distros commonly install only
+        // `google-chrome-stable` (no `google-chrome` symlink), so we must
+        // pass the path explicitly.
+        let caps = crate::discovery::detect();
+        let chrome_path = caps.installed_browsers.first().map(|b| b.path.clone());
+
+        // Use a per-launch user-data-dir so stale `SingletonLock` files
+        // from a previous crash don't block subsequent launches.
+        let user_data_dir = tempfile::Builder::new()
+            .prefix("desk-mcp-chrome-")
+            .tempdir()
+            .map_err(|e| format!("Failed to create user-data-dir: {e}"))?;
+
+        let extra_args = [
+            // Common headless-on-Linux stability flags. Without these,
+            // Chrome 149 can hang on launch in some environments (notably
+            // when /dev/shm is small or when GPU is unavailable).
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-setuid-sandbox",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ];
+
+        let mut builder = BrowserConfig::builder();
+        builder = builder
             .no_sandbox()
             .new_headless_mode()
             .window_size(1280, 1024)
+            .user_data_dir(user_data_dir.path())
+            .launch_timeout(Duration::from_secs(20))
+            .request_timeout(Duration::from_secs(15))
+            .args(extra_args);
+        if let Some(path) = chrome_path.as_deref() {
+            builder = builder.chrome_executable(path);
+        }
+
+        let config = builder
             .build()
             .map_err(|e| format!("Invalid browser config: {e}"))?;
 
-        let (browser, mut handler) = Browser::launch(config)
-            .await
-            .map_err(|e| format!("Failed to launch browser: {e}"))?;
+        // Wrap the entire launch future in a hard timeout. chromiumoxide's
+        // own `launch_timeout` only bounds the wait for the DevTools websocket
+        // URL on chrome's stderr — it does NOT bound the rest of the launch
+        // path (e.g. CDP handshake). Without this outer wrapper, a chrome
+        // child that starts but then hangs leaves the entire MCP call
+        // stuck forever. On timeout, the future is dropped, which drops
+        // the inner `Browser` instance, which (because `kill_on_drop`
+        // defaults to true in chromiumoxide) kills the chrome child.
+        const LAUNCH_TIMEOUT_SECS: u64 = 25;
+        let launch_result = tokio::time::timeout(
+            Duration::from_secs(LAUNCH_TIMEOUT_SECS),
+            Browser::launch(config),
+        )
+        .await;
+
+        let (browser, mut handler) = match launch_result {
+            Ok(Ok(pair)) => pair,
+            Ok(Err(e)) => {
+                return Err(format!(
+                    "Failed to launch browser: {e}. \
+                     Detected browser path: `{}`. \
+                     User-data-dir: `{}`. \
+                     Try running the browser manually to diagnose.",
+                    chrome_path
+                        .clone()
+                        .unwrap_or_else(|| "<no browser detected>".into()),
+                    user_data_dir.path().display()
+                ));
+            }
+            Err(_elapsed) => {
+                return Err(format!(
+                    "Browser launch timed out after {LAUNCH_TIMEOUT_SECS}s — \
+                     Chrome did not become responsive. Detected browser path: \
+                     `{}`. User-data-dir: `{}`.",
+                    chrome_path
+                        .clone()
+                        .unwrap_or_else(|| "<no browser detected>".into()),
+                    user_data_dir.path().display()
+                ));
+            }
+        };
 
         // Wait briefly for browser to initialize
         tokio::time::sleep(Duration::from_millis(500)).await;
