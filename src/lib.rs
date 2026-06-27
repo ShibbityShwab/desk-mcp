@@ -1,4 +1,4 @@
-//! AionUI Unified MCP Server — Full Computer Use + Browser Use
+//! DeskMCP — Full Agentic Desktop Control MCP Server for Linux
 //!
 //! Single MCP server providing agentic control of a Linux system.
 //! CPU-only, dual-mode: personal desktop + headless server.
@@ -23,5 +23,5 @@ pub static PROVIDER: LazyLock<Box<dyn ComputerProvider + Send + Sync>> =
     LazyLock::new(|| providers::get_provider());
 
 /// Global MCP server name
-pub const SERVER_NAME: &str = "aionui-unified";
+pub const SERVER_NAME: &str = "desk-mcp";
 pub const SERVER_VERSION: &str = "0.1.0";

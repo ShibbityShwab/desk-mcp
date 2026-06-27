@@ -1,13 +1,13 @@
 [package]
-name = "aionui-unified"
+name = "desk-mcp"
 version = "0.1.0"
 edition = "2021"
-description = "State-of-the-art MCP server for full agentic computer use + browser use on Linux. CPU-only, dual-mode (personal desktop + headless server)."
+description = "DeskMCP — full agentic desktop control MCP server for Linux. Screenshots, mouse, keyboard, OCR, window management, clipboard, shell, and Chrome CDP browser automation. CPU-only, dual-mode (KDE Wayland + headless). 42 tools."
 license = "MIT"
-repository = "https://github.com/ShibbityShwab/aionui-unified"
+repository = "https://github.com/ShibbityShwab/desk-mcp"
 
 [[bin]]
-name = "aionui-unified"
+name = "desk-mcp"
 path = "src/main.rs"
 
 [dependencies]

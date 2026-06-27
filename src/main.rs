@@ -1,11 +1,11 @@
-//! AionUI Unified MCP Server — Entry point
+//! DeskMCP — Entry point
 //!
 //! Implements the MCP JSON-RPC 2.0 stdio protocol.
 //! Reads messages from stdin, dispatches to tool handlers, writes responses to stdout.
 //!
 //! Protocol: Content-Length header followed by JSON-RPC 2.0 message.
 
-use aionui_unified::tools;
+use desk_mcp::tools;
 use serde_json::Value;
 use std::io::{BufRead, Write};
 use tokio::sync::mpsc;
@@ -96,8 +96,8 @@ async fn handle_request(req: JsonRpcRequest) -> Option<JsonRpcResponse> {
             Some(serde_json::json!({
                 "protocolVersion": "2024-11-05",
                 "serverInfo": {
-                    "name": aionui_unified::SERVER_NAME,
-                    "version": aionui_unified::SERVER_VERSION,
+                    "name": desk_mcp::SERVER_NAME,
+                    "version": desk_mcp::SERVER_VERSION,
                 },
                 "capabilities": {
                     "tools": {}
@@ -175,19 +175,19 @@ async fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("aionui_unified=info".parse().unwrap())
+                .add_directive("desk_mcp=info".parse().unwrap())
         )
         .with_writer(std::io::stderr) // stderr for logs (stdin/stdout is MCP protocol)
         .init();
 
     tracing::info!(
-        server = aionui_unified::SERVER_NAME,
-        version = aionui_unified::SERVER_VERSION,
+        server = desk_mcp::SERVER_NAME,
+        version = desk_mcp::SERVER_VERSION,
         "starting MCP server"
     );
 
     // Discover environment (triggers lazy provider init)
-    let caps = aionui_unified::discovery::detect();
+    let caps = desk_mcp::discovery::detect();
     tracing::info!(
         display = caps.display_type,
         desktop = caps.desktop,
