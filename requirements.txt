@@ -1,5 +1,0 @@
-mcp>=1.0
-pillow>=10.0
-rapidocr-onnxruntime>=1.2
-playwright>=1.40
-numpy>=1.24
