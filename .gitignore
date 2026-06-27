@@ -9,3 +9,8 @@ venv/
 *.log
 /tmp/
 .env
+
+
+# Added by cargo
+
+/target

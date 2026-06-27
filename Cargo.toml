@@ -1,0 +1,52 @@
+[package]
+name = "aionui-unified"
+version = "0.1.0"
+edition = "2021"
+description = "State-of-the-art MCP server for full agentic computer use + browser use on Linux. CPU-only, dual-mode (personal desktop + headless server)."
+license = "MIT"
+repository = "https://github.com/ShibbityShwab/aionui-unified"
+
+[[bin]]
+name = "aionui-unified"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Input simulation (keyboard/mouse)
+enigo = { version = "0.6", features = ["wayland"] }
+
+# Browser automation (Chrome DevTools Protocol)
+chromiumoxide = "0.9"
+
+# Image processing
+image = "0.25"
+base64 = "0.22"
+
+# Clipboard
+arboard = "3.6"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# System discovery
+which = "7"
+libc = "0.2"
+
+# Async trait support
+async-trait = "0.1"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Utilities
+chrono = "0.4"
+tempfile = "3"
+futures = "0.3"
