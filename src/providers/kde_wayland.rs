@@ -46,7 +46,9 @@ impl ComputerProvider for KdeWaylandProvider {
 
     // ── Screenshot ───────────────────────────────────────
     fn screenshot(&self, region: Option<(i32, i32, u32, u32)>) -> Result<Vec<u8>> {
-        let tmp = tempfile::NamedTempFile::new()?;
+        // Give the tempfile a .png suffix so tools that key off the
+        // extension (and human debugging) work correctly.
+        let tmp = tempfile::Builder::new().suffix(".png").tempfile()?;
         let path = tmp.path().to_string_lossy().to_string();
 
         let output = Command::new("spectacle")
@@ -58,7 +60,14 @@ impl ComputerProvider for KdeWaylandProvider {
             bail!("spectacle failed: {}", String::from_utf8_lossy(&output.stderr));
         }
 
-        let img = image::open(&path)?;
+        // Load from bytes rather than `image::open(&path)` — image::open
+        // needs either a known extension (which may not be present on all
+        // platforms) or content sniffing, which is fragile. Reading bytes
+        // and using load_from_memory is unambiguous.
+        let bytes = std::fs::read(&path)
+            .with_context(|| format!("read screenshot file {path}"))?;
+        let img = image::load_from_memory(&bytes)
+            .context("decode screenshot PNG")?;
 
         let result = if let Some((x, y, w, h)) = region {
             let cropped = img.crop_imm(
