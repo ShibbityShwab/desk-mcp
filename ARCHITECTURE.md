@@ -1,174 +1,217 @@
-# AionUI Unified MCP Server — Architecture v1.0
-
-## Council of Experts — Synthesized Design
-**Date:** 2026-06-27
-**Target:** Single state-of-the-art MCP for full computer use + browser use, CPU-only, dual-mode (headless server + personal desktop)
-
----
+# DeskMCP Architecture
 
 ## 1. System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    AionUI Unified MCP Server                 │
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │  Computer Use │  │  Browser Use │  │  Discovery    │      │
-│  │  24 tools     │  │  17 tools    │  │  4 tools      │      │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
-│         │                 │                 │               │
-│  ┌──────┴─────────────────┴─────────────────┴───────┐      │
-│  │              Provider Layer (Strategy)             │      │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────┐ │      │
-│  │  │ KDE      │ │ wlroots  │ │ X11      │ │Head- │ │      │
-│  │  │ Wayland  │ │ Wayland  │ │ (xdotool)│ │less  │ │      │
-│  │  │(kdotool) │ │ (ydotool)│ │          │ │      │ │      │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────┘ │      │
-│  └──────────────────────┬───────────────────────────┘      │
-│                         │                                   │
-│  ┌──────────────────────┴───────────────────────────┐      │
-│  │              Auto-Discovery Engine                 │      │
-│  │  Detects: display type, desktop env, available    │      │
-│  │  tools, browsers, auth sources, installed apps    │      │
-│  └──────────────────────────────────────────────────┘      │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                         DeskMCP (Rust)                            │
+│                                                                  │
+│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐      │
+│  │  Computer Use  │  │  Browser Use   │  │   Discovery     │      │
+│  │  24 tools      │  │  17 tools      │  │   2 tools       │      │
+│  └───────┬────────┘  └───────┬────────┘  └───────┬────────┘      │
+│          │                   │                    │               │
+│  ┌───────┴───────────────────┴────────────────────┴────────┐     │
+│  │                Provider Layer (trait)                     │     │
+│  │  ┌─────────────────────┐  ┌──────────────────┐          │     │
+│  │  │ KDE Wayland         │  │ Headless          │          │     │
+│  │  │ spectacle, ydotool, │  │ graceful          │          │     │
+│  │  │ kdotool, wl-paste   │  │ degradation       │          │     │
+│  │  └─────────────────────┘  └──────────────────┘          │     │
+│  └─────────────────────────────┬───────────────────────────┘     │
+│                                │                                  │
+│  ┌─────────────────────────────┴───────────────────────────┐     │
+│  │          Auto-Discovery Engine                            │     │
+│  │  Detects: display type, desktop env, browser CDP ports,  │     │
+│  │  installed binaries, available capabilities              │     │
+│  └───────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-## 2. Mode Detection
+## 2. Transport: MCP JSON-RPC 2.0 over stdio
 
-At startup (<20ms), detect environment:
-
-| Signal | Desktop (KDE) | Desktop (Other) | Headless |
-|--------|--------------|-----------------|----------|
-| WAYLAND_DISPLAY | wayland-0 | wayland-1 | (unset) |
-| XDG_CURRENT_DESKTOP | KDE | GNOME/Sway/... | (unset) |
-| Physical GPU (DRM) | ✅ | ✅ | ❌ |
-| DISPLAY | :0 | :0 | :99 (Xvfb) |
-| **Provider** | `wayland_kde` | `wayland_wlr` or `x11` | `headless` |
-
-## 3. Display/Screenshot Stack
-
-### Personal Desktop (KDE Wayland)
-- **Primary:** `spectacle -b -n -f -o /tmp/file.png` (~220ms, 2560×1440)
-- **Advanced:** Persistent PipeWire screencast helper (sub-50ms, requires C helper linking libKPipeWireRecord)
-- **Fallback:** Spectacle DBus API (~140ms, requires spectacle in background mode)
-
-### Headless Server
-- **Browser:** Playwright's built-in `headless=True` (no display needed)
-- **Full desktop:** Xvfb virtual display (`Xvfb :99 -screen 0 1920x1080x24`)
-- **Screenshot:** `xdotool` or `import` (ImageMagick) on Xvfb
-
-## 4. OCR Stack (Hybrid Two-Tier)
+DeskMCP implements the Model Context Protocol (MCP) with a custom JSON-RPC 2.0 handler over stdin/stdout. No third-party MCP crate — just tokio, serde_json, and a `Content-Length` header parser.
 
 ```
-Screenshot → Tier 1: Tesseract 5.5 LSTM (~50ms, fast)
-                ↓ low confidence?
-             Tier 2: RapidOCR ONNX (~110ms, precise)
-                ↓ still low?
-             Tier 3: Crop region → re-OCR with RapidOCR
+Client                        DeskMCP
+  │                              │
+  │  Content-Length: 123\r\n     │
+  │  \r\n                        │
+  │  {"jsonrpc":"2.0",...}      │
+  │ ──────────────────────────►  │  stdin reader thread
+  │                              │  → mpsc channel → async handler
+  │                 Content-Length: 456\r\n
+  │                 \r\n
+  │                 {"jsonrpc":"2.0","result":{...}}
+  │  ◄──────────────────────────  stdout writer
 ```
 
-| Engine | Speed (1440p) | Accuracy (UI) | CPU Load |
-|--------|--------------|---------------|----------|
-| Tesseract 5.5 LSTM | ~50ms | ★★★☆☆ | Very Low |
-| RapidOCR ONNX | ~110ms | ★★★★☆ | Low |
-| Tesseract + preprocess | ~80ms | ★★★★☆ | Low |
+**Methods**: `initialize`, `tools/list`, `tools/call`, `ping`, `notifications/*`
 
-Preprocessing: CLAHE contrast enhancement → 1.5x upscale → Tesseract
+## 3. Provider Pattern
+
+Rust `trait ComputerProvider` with two implementations:
+
+```rust
+trait ComputerProvider {
+    fn screenshot(&self, region: Option<(i32,i32,u32,u32)>) -> Result<Vec<u8>>;
+    fn get_screen_size(&self) -> Result<ScreenSize>;
+    fn mouse_move(&self, x: i32, y: i32, smooth: bool, duration_ms: u64) -> Result<()>;
+    fn mouse_click(&self, button: &str, x: Option<i32>, y: Option<i32>, clicks: u32) -> Result<()>;
+    fn mouse_scroll(&self, dx: i32, dy: i32, x: Option<i32>, y: Option<i32>) -> Result<()>;
+    fn mouse_drag(&self, x1, y1, x2, y2, button, duration_ms) -> Result<()>;
+    fn keyboard_type(&self, text: &str, delay_ms: u64) -> Result<()>;
+    fn key_press(&self, key: &str) -> Result<()>;
+    fn clipboard_get(&self) -> Result<String>;
+    fn clipboard_set(&self, text: &str) -> Result<()>;
+    fn shell_run(&self, command: &str, timeout: u64) -> Result<ShellResult>;
+    fn list_windows(&self) -> Result<Vec<WindowInfo>>;
+    fn focus_window(&self, title: &str) -> Result<WindowMatch>;
+    fn get_active_window(&self) -> Result<Option<WindowInfo>>;
+    fn open_app(&self, name: &str) -> Result<()>;
+    fn notify(&self, title: &str, message: &str, urgency: &str) -> Result<()>;
+}
+```
+
+Provider is selected once at startup via `std::sync::LazyLock` and never changes.
+
+## 4. Display / Screenshot Stack
+
+### KDE Wayland (personal desktop)
+- **spectacle CLI** — `spectacle -b -n -f -o /tmp/file.png` (~220ms, 2560×1440)
+- Screenshot bytes are loaded into memory, optionally base64-encoded for MCP response
+- Region capture supported: `spectacle -b -n -r {x},{y},{w},{h} -o /tmp/file.png`
+
+### Headless
+- All screenshot calls return `DEPENDENCY_MISSING` error
+- Browser screenshots still work via chromiumoxide CDP (renders internally)
 
 ## 5. Input Stack
 
-| Tool | X11 | Wayland | Headless | Notes |
-|------|-----|---------|----------|-------|
-| **ydotool** | ✅ | ✅ | ✅ | Primary universal backend via /dev/uinput |
-| **kdotool** | ❌ | ✅ (KDE) | ❌ | KDE-native, used when KDE detected |
-| **xdotool** | ✅ | ❌ | ✅ | X11/Xvfb fallback |
-
-Keyboard: ydotool `key` and `type` commands with full Linux input key code mapping
-Mouse: ydotool `mousemove`, `click`, `bakers --wheel`
+| Tool | Wayland | Headless | Notes |
+|------|---------|----------|-------|
+| **ydotool** | ✅ via `/dev/uinput` | ❌ | Mouse move, click, scroll, keyboard |
+| **kdotool** | ✅ KWin D-Bus | ❌ | Window management |
+| **wl-paste/wl-copy** | ✅ | ❌ | Clipboard |
+| **Key code mapping** | 139 entries | — | Linux input key codes → ydotool |
 
 ## 6. Browser Stack
 
-### Playwright (primary)
-- `playwright.async_api` — async Python API
-- **Desktop mode:** `chromium.connect_over_cdp("http://127.0.0.1:9222")` — connects to user's running Chrome
-- **Headless mode:** `chromium.launch(headless=True)` — fresh Chromium
-- **Firefox:** `firefox.launch_persistent_context()` — launch-only, can't connect to existing
-- CPU-only flags: `--disable-gpu`, `--disable-software-rasterizer`
+### chromiumoxide (pure Rust CDP)
 
-### Self-Discovery
-- Scan processes for `--remote-debugging-port` via `psutil`
-- Check `~/.config/google-chrome/DevToolsActivePort`
-- Check common browser binary paths
-
-## 7. Window Management
-
-### Personal Desktop (KDE)
-- `kdotool search`, `getwindowname`, `getwindowgeometry`, `windowactivate` via KWin D-Bus
-
-### Cross-Environment Fallback
-- AT-SPI (`pyatspi`) — accessibility tree, works on any DE with AT-SPI enabled
-- X11 fallback: `xdotool search`, `getwindowname`, `windowactivate`
-
-## 8. Unified Response Contract
-
-Every tool returns:
-```json
-{"ok": true, "result": {...}, "error": null}
-// or
-{"ok": false, "result": null, "error": {"code": "...", "message": "...", "detail": "..."}}
+```
+  Browser::connect(url) → (Browser, Handler)   // connect to running Chrome
+  Browser::launch(config) → (Browser, Handler)  // headless Chromium
+  Page::goto(NavigateParams)
+  Page::screenshot(ScreenshotParams) → Vec<u8>
+  Page::evaluate(expr) → EvaluationResult
+  Page::find_element(selector) → Element
+  Element::click(), .type_str(), .press_key()
 ```
 
-Error codes: `DEPENDENCY_MISSING`, `TIMEOUT`, `PROVIDER_ERROR`, `INVALID_ARGS`, `PERMISSION_DENIED`, `NOT_IMPLEMENTED`
+- **Desktop mode**: `Browser::connect("http://localhost:{port}")` — finds Chrome CDP port from `/proc` scanning
+- **Headless mode**: `Browser::launch(BrowserConfig::new_headless_mode())` — fresh headless Chromium
+- Handler event stream spawned as background tokio task
 
-## 9. Complete Tool List (42 tools)
+## 7. OCR Stack
 
-### Computer Use (24 tools)
-1. `screenshot` — Capture screen/region as base64 PNG/JPEG
-2. `get_screen_size` — Display resolution
-3. `mouse_move` — Move cursor (teleport or smooth)
-4. `mouse_click` — Click at position
-5. `mouse_double_click` — Double-click
-6. `mouse_scroll` — Scroll wheel
-7. `mouse_drag` — Click and drag
-8. `keyboard_type` — Type text string
-9. `key_press` — Press key/combo (ctrl+c, alt+Tab, etc.)
-10. `press_hotkey` — Multiple key combo
-11. `click_on_text` — OCR → find text → click
-12. `wait_for_text` — Poll for text appearance
-13. `extract_text` — OCR full screen/region → all text with coords
-14. `describe_screen` — AI summary of screen content
-15. `wait` — Sleep N seconds
-16. `clipboard_get` — Read clipboard
-17. `clipboard_set` — Write clipboard
-18. `shell_run` — Execute shell command (gated by ALLOW_SHELL env var)
-19. `list_windows` — Enumerate windows
-20. `focus_window` — Activate window by title/app match
-21. `get_active_window` — Currently focused window info
-22. `open_app` — Launch application by name
-23. `notify` — Send desktop notification
-24. `type_to_window` — Focus window → type text
+```
+Screenshot bytes → tesseract stdin stdout --psm 6 -l eng tsv
+                        ↓
+                  Parse TSV output
+                        ↓
+            Vec<OcrItem> { text, confidence, x, y, w, h }
+                        ↓
+            find_text() → click_on_text / wait_for_text
+```
 
-### Browser Use (17 tools)
-25. `browser_launch` — Launch/connect to browser
-26. `browser_navigate` — Navigate to URL
-27. `browser_click` — Click element by selector/text/coordinates
-28. `browser_type` — Type into input field
-29. `browser_screenshot` — Screenshot page/element
-30. `browser_exec_js` — Execute JavaScript
-31. `browser_get_html` — Get page HTML
-32. `browser_get_text` — Get visible text content
-33. `browser_wait_for` — Wait for selector/text
-34. `browser_tabs` — List open tabs
-35. `browser_new_tab` — Open new tab
-36. `browser_close_tab` — Close tab
-37. `browser_switch_tab` — Switch to tab by index/title
-38. `browser_download` — Trigger download
-39. `browser_upload` — Upload file(s)
-40. `browser_cookies` — Get/set cookies
-41. `browser_dialog` — Handle alert/confirm/prompt
-42. `browser_console` — Get console messages
+Tesseract TSV provides word-level bounding boxes at level 5. Confidence filtering available for low-quality matches.
 
-### Discovery & Status (2 tools)
-43. `discover` — Report all detected capabilities, browsers, apps
-44. `server_status` — Health check: uptime, memory, tool availability
+## 8. Tool Dispatch
+
+```
+tools/call {"name":"screenshot","arguments":{...}}
+        │
+        ▼
+  dispatch(name, args)
+        │
+        ├─ "screenshot".."type_to_window" → computer::handle()
+        │                                      │
+        │                                      └─ PROVIDER.method()
+        │
+        ├─ "browser_launch".."browser_console" → browser::handle()
+        │                                           │
+        │                                           └─ chromiumoxide Page/Element
+        │
+        └─ "discover" / "server_status" → inline detection
+```
+
+## 9. Response Contract
+
+Every tool returns:
+
+```json
+{"ok": true, "result": {...}}
+
+{"ok": false, "result": null, "error": {"code": "COMPUTER_ERROR", "message": "..."}}
+```
+
+Error codes: `COMPUTER_ERROR`, `BROWSER_ERROR`, `UNKNOWN_TOOL`, `DEPENDENCY_MISSING`, `NOT_AVAILABLE`
+
+## 10. Project Structure
+
+```
+src/
+├── main.rs             # Entry point, JSON-RPC 2.0 stdio server
+├── lib.rs              # Library root, provider singleton, constants
+├── response.rs         # ToolResponse struct + helpers
+├── discovery.rs        # Environment auto-detection
+├── ocr.rs              # Tesseract TSV parser
+├── tools/
+│   ├── mod.rs          # 42 tool definitions with JSON schemas, dispatch
+│   ├── computer.rs     # 24 computer use handlers
+│   └── browser.rs      # 17 browser use handlers (chromiumoxide)
+└── providers/
+    ├── mod.rs          # ComputerProvider trait + factory
+    ├── kde_wayland.rs  # KDE Wayland (spectacle, ydotool, kdotool)
+    └── headless.rs     # Headless graceful degradation
+```
+
+## 11. Dependencies
+
+| Crate | Purpose |
+|-------|---------|
+| `tokio` | Async runtime |
+| `serde` / `serde_json` | JSON-RPC messages, tool args/results |
+| `chromiumoxide` | Chrome DevTools Protocol client |
+| `enigo` | Keyboard simulation (fallback) |
+| `image` | PNG decoding for OCR prep |
+| `base64` | Screenshot encoding |
+| `arboard` | Clipboard access |
+| `tracing` / `tracing-subscriber` | Structured logging to stderr |
+| `which` | Binary detection |
+| `libc` | UID check |
+| `async-trait` | Async trait methods |
+| `anyhow` / `thiserror` | Error handling |
+| `futures` | StreamExt for CDP handler events |
+
+## 12. Performance
+
+| Operation | Time |
+|-----------|------|
+| Startup + detection | <5ms |
+| Screenshot (spectacle CLI) | ~220ms |
+| OCR (Tesseract TSV, 1440p) | ~50ms |
+| Mouse click (ydotool) | ~2ms |
+| Keyboard type (ydotool) | ~10ms per char |
+| Browser navigate + DOM ready | 500ms–2s |
+| Browser screenshot (CDP) | ~100ms |
+
+## 13. Future Roadmap
+
+- [ ] PipeWire screencast helper (sub-50ms persistent capture)
+- [ ] RapidOCR ONNX via `ort` crate (replaces tesseract subprocess)
+- [ ] ACP transport alongside MCP
+- [ ] Wayland non-KDE provider (wlroots, GNOME)
+- [ ] X11 provider (xdotool)
+- [ ] Firefox CDP support
