@@ -11,16 +11,18 @@ pub async fn handle(name: &str, args: Value) -> ToolResponse {
     let result = handle_inner(name, args).await;
     match result {
         Ok(value) => response::ok(value),
-        Err(message) => response::err("COMPUTER_ERROR", &message),
+        Err((code, message)) => response::err(&code, &message),
     }
 }
 
-async fn handle_inner(name: &str, args: Value) -> Result<Value, String> {
+/// Inner handler. Returns `Err((code, message))` so individual tools can
+/// surface a distinct error code (e.g. `SHELL_DISABLED`) when needed.
+async fn handle_inner(name: &str, args: Value) -> Result<Value, (String, String)> {
     let p = &PROVIDER;
 
     macro_rules! map_err {
         ($expr:expr, $msg:literal) => {
-            $expr.map_err(|e| format!($msg, e))
+            $expr.map_err(|e| ("COMPUTER_ERROR".into(), format!($msg, e)))
         };
     }
 
@@ -35,7 +37,7 @@ async fn handle_inner(name: &str, args: Value) -> Result<Value, String> {
             let img_bytes = map_err!(p.screenshot(region), "screenshot failed: {0}")?;
 
             let decoded = image::load_from_memory(&img_bytes)
-                .map_err(|e| format!("image decode failed: {e}"))?;
+                .map_err(|e| ("COMPUTER_ERROR".into(), format!("image decode failed: {e}")))?;
 
             let b64 = base64::engine::general_purpose::STANDARD.encode(&img_bytes);
 
@@ -144,7 +146,7 @@ async fn handle_inner(name: &str, args: Value) -> Result<Value, String> {
             let items = map_err!(crate::ocr::ocr(&img_bytes), "ocr failed: {0}")?;
 
             let found = crate::ocr::find_text(&items, &text, partial)
-                .ok_or_else(|| format!("Text '{text}' not found on screen"))?;
+                .ok_or_else(|| ("TEXT_NOT_FOUND".into(), format!("Text '{text}' not found on screen")))?;
 
             let px = found.x + (found.width as i32) / 2;
             let py = found.y + (found.height as i32) / 2;
@@ -186,7 +188,7 @@ async fn handle_inner(name: &str, args: Value) -> Result<Value, String> {
                 tokio::time::sleep(Duration::from_millis(500)).await;
             }
 
-            Err(format!("'{text}' not found within {timeout}s"))
+            Err(("TEXT_NOT_FOUND".into(), format!("'{text}' not found within {timeout}s")))
         }
 
         "extract_text" => {
@@ -218,7 +220,7 @@ async fn handle_inner(name: &str, args: Value) -> Result<Value, String> {
 
             let img_bytes = map_err!(p.screenshot(region), "screenshot failed: {0}")?;
             let decoded = image::load_from_memory(&img_bytes)
-                .map_err(|e| format!("image decode: {e}"))?;
+                .map_err(|e| ("COMPUTER_ERROR".into(), format!("image decode: {e}")))?;
             let items = map_err!(crate::ocr::ocr(&img_bytes), "ocr failed: {0}")?;
 
             let mut desc = format!("Screen {}x{}\nDetected {} text elements:\n",
@@ -266,7 +268,10 @@ async fn handle_inner(name: &str, args: Value) -> Result<Value, String> {
 
         "shell_run" => {
             if std::env::var("ALLOW_SHELL").as_deref() != Ok("1") {
-                return Err("shell_run requires ALLOW_SHELL=1 env var".to_string());
+                return Err((
+                    "SHELL_DISABLED".into(),
+                    "shell_run requires ALLOW_SHELL=1 env var".into(),
+                ));
             }
             let cmd = args["command"].as_str().unwrap_or("");
             let timeout = args.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30);
@@ -318,7 +323,7 @@ async fn handle_inner(name: &str, args: Value) -> Result<Value, String> {
                     "id": w.id, "title": w.title, "app": w.app,
                     "geometry": { "x": w.geometry.x, "y": w.geometry.y, "width": w.geometry.width, "height": w.geometry.height },
                 })),
-                None => Err("no active window".to_string()),
+                None => Err(("NO_ACTIVE_WINDOW".into(), "no active window".into())),
             }
         }
 
@@ -344,7 +349,7 @@ async fn handle_inner(name: &str, args: Value) -> Result<Value, String> {
             let result = map_err!(p.focus_window(title), "focus_window failed: {0}")?;
 
             if !result.matched {
-                return Err(format!("Window matching '{title}' not found"));
+                return Err(("WINDOW_NOT_FOUND".into(), format!("Window matching '{title}' not found")));
             }
 
             map_err!(p.keyboard_type(text, 10), "keyboard_type failed: {0}")?;
@@ -356,6 +361,6 @@ async fn handle_inner(name: &str, args: Value) -> Result<Value, String> {
             }))
         }
 
-        _ => Err(format!("no computer tool '{name}'")),
+        _ => Err(("UNKNOWN_TOOL".into(), format!("no computer tool '{name}'"))),
     }
 }
