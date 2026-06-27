@@ -3,6 +3,7 @@
 //! Success: `{"ok": true, "result": {...}, "error": null}`
 //! Failure: `{"ok": false, "result": null, "error": {"code": "...", "message": "..."}}`
 
+use crate::error::McpError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -34,7 +35,7 @@ pub fn ok(value: impl Serialize) -> ToolResponse {
     }
 }
 
-/// Build an error response
+/// Build an error response from code + message
 pub fn err(code: &str, message: &str) -> ToolResponse {
     ToolResponse {
         ok: false,
@@ -47,7 +48,7 @@ pub fn err(code: &str, message: &str) -> ToolResponse {
     }
 }
 
-/// Build an error with detail
+/// Build an error response with detail
 pub fn err_detail(code: &str, message: &str, detail: &str) -> ToolResponse {
     ToolResponse {
         ok: false,
@@ -60,28 +61,39 @@ pub fn err_detail(code: &str, message: &str, detail: &str) -> ToolResponse {
     }
 }
 
+/// Build an error response from an McpError
+pub fn from_mcp_error(err: McpError) -> ToolResponse {
+    ToolResponse {
+        ok: false,
+        result: None,
+        error: Some(ToolError {
+            code: err.code().to_string(),
+            message: err.to_string(),
+            detail: None,
+        }),
+    }
+}
+
 /// Dependency missing error
 pub fn dep_missing(tool: &str, dep: &str, hint: &str) -> ToolResponse {
-    err_detail(
-        "DEPENDENCY_MISSING",
-        &format!("{dep} not found. Install: {hint}"),
-        &format!("Tool '{tool}' requires {dep}"),
-    )
+    from_mcp_error(McpError::DependencyMissing {
+        tool: tool.into(),
+        dep: dep.into(),
+        hint: hint.into(),
+    })
 }
 
 /// Not available in this environment
 pub fn not_available(tool: &str) -> ToolResponse {
-    err_detail(
-        "NOT_IMPLEMENTED",
-        &format!("'{tool}' is not available in this environment"),
-        "",
-    )
+    from_mcp_error(McpError::NotAvailable {
+        tool: tool.into(),
+    })
 }
 
 /// Timeout error
 pub fn timeout(tool: &str, seconds: f64) -> ToolResponse {
-    err(
-        "TIMEOUT",
-        &format!("'{tool}' timed out after {seconds}s"),
-    )
+    from_mcp_error(McpError::Timeout {
+        tool: tool.into(),
+        seconds,
+    })
 }

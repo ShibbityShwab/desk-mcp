@@ -1,123 +1,190 @@
-# DeskMCP — Full Agentic Desktop Control MCP Server
+# desk-mcp — Full Desktop Control for AI Agents
 
-Give any LLM full control of your Linux desktop. Screenshots, mouse, keyboard, OCR, window management, clipboard, shell, notifications, and Chrome CDP browser automation — all through a single MCP server. Written in Rust. CPU-only. 42 tools.
+[![CI](https://github.com/ShibbityShwab/desk-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ShibbityShwab/desk-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-[![Rust](https://img.shields.io/badge/rust-1.96+-orange.svg)](https://www.rust-lang.org)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Linux-1793D1.svg)](#)
+Give AI agents (Claude, GPT, etc.) **full desktop control** — screenshots, mouse, keyboard,
+OCR, browser automation, and code tools — all through a single MCP (Model Context Protocol) server.
 
-## Architecture
+50 tools. Pure Rust. One binary. Zero config for KDE + Wayland.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    DeskMCP (Rust)                        │
-│                                                         │
-│  Computer Use (24 tools)    Browser Use (16 tools)      │
-│  screenshot, mouse,         navigate, click, type,      │
-│  keyboard, OCR, clipboard,  screenshot, JS exec,        │
-│  windows, shell, notify     cookies, tabs, downloads    │
-│                                                         │
-│               Discovery + Status (2 tools)              │
-│               auto-detect environment                   │
-└──────────────────────┬──────────────────────────────────┘
-                       │
-┌──────────────────────┴──────────────────────────────────┐
-│         Provider Layer (strategy pattern)                │
-│  KDE Wayland  │  Headless fallback                      │
-└─────────────────────────────────────────────────────────┘
-```
-
-## Quick Start
+##  One-Line Install
 
 ```bash
-# Install system dependencies (Arch/CachyOS)
-sudo pacman -S ydotool spectacle wl-clipboard tesseract tesseract-data-eng chromium
-
-# Enable ydotool daemon (required for mouse/keyboard)
-systemctl --user enable --now ydotoold
-
-# Build
-cargo build --release
-
-# Run
-./target/release/desk-mcp
+curl -fsSL https://raw.githubusercontent.com/ShibbityShwab/desk-mcp/main/install.sh | bash
 ```
 
-## Dual Mode
+##  Quick Start
 
-| Mode | Display | Input | Browser | Use case |
-|------|---------|-------|---------|----------|
-| **Desktop (KDE Wayland)** | Real display via spectacle | ydotool + kdotool | Connect to running Chrome CDP | Personal computer automation |
-| **Headless** | No display | ❌ mouse/keyboard unavailable | Headless Chromium via chromiumoxide | Server-side browser automation |
+### 1. Install desk-mcp
 
-## Requirements
+```bash
+# One-liner
+curl -fsSL https://raw.githubusercontent.com/ShibbityShwab/desk-mcp/main/install.sh | bash
 
-- **Linux** (KDE Wayland, or headless)
-- **Rust 1.96+** (to build) or use the prebuilt binary
-- **ytool daemon** (`systemctl --user enable --now ydotoold`)
-- **spectacle** for screenshots, **tesseract** for OCR
-- **chromium** for browser automation
+# Or from source
+cargo install --git https://github.com/ShibbityShwab/desk-mcp
+```
 
-## MCP Clients
+### 2. Configure your MCP client
 
-Works with any MCP client — no vendor lock-in:
-
-- **Claude Desktop** — native MCP support
-- **Cline / Roo Code** — VS Code extensions
-- **Continue.dev** — open-source AI code assistant
-- **Cody (Sourcegraph)** — MCP integration
-- **OpenHands / OpenDevin** — agentic coding
-- **Goose (Block)** — MCP agent
-
-Add to your MCP client config:
+Add this to your Claude Desktop config (`~/.config/Claude/claude_desktop_config.json`):
 
 ```json
 {
   "mcpServers": {
     "desk-mcp": {
-      "command": "/path/to/desk-mcp/target/release/desk-mcp",
-      "args": [],
+      "command": "desk-mcp"
+    }
+  }
+}
+```
+
+### 3. Start using it
+
+Ask your AI: *"Take a screenshot of my desktop and describe what you see"*
+
+##  What It Can Do
+
+###  Computer Use (24 tools)
+| Tool | Description |
+|------|-------------|
+| `screenshot` | Capture screen as base64 PNG |
+| `describe_screen` | Screenshot + OCR = text description |
+| `find_text` | Locate text on screen, return position |
+| `mouse_move` | Move mouse to X,Y |
+| `click` | Click at position (or current location) |
+| `double_click` | Double-click |
+| `right_click` | Right-click |
+| `mouse_drag` | Click, drag, release |
+| `type_text` | Type text at current focus |
+| `key_down` / `key_up` | Press/release individual keys |
+| `press_key` | Press and release a key |
+| `key_combo` | Hold modifiers + press key |
+| `shell_run` | Run shell commands (guarded) |
+| `env_get` | Read environment variables |
+| `window_list` | List open windows |
+| `window_focus` | Focus a window by title |
+| `window_resize` | Resize a window |
+| `window_close` | Close a window |
+| `clipboard_read` / `clipboard_write` | Read/write clipboard |
+| `notify` | Send desktop notification |
+| `get_active_window_title` | Get focused window title |
+| `discover` | Environment detection info |
+| `server_status` | Server health + capabilities |
+
+###  Browser Use (17 tools)
+| Tool | Description |
+|------|-------------|
+| `browser_launch` | Launch or connect to Chromium |
+| `browser_navigate` | Navigate to URL |
+| `browser_click` | Click element (by selector or X,Y) |
+| `browser_type` | Type into input field |
+| `browser_screenshot` | Screenshot page or element |
+| `browser_exec_js` | Execute JavaScript |
+| `browser_get_html` | Get full HTML or element HTML |
+| `browser_get_text` | Extract visible text |
+| `browser_wait_for` | Wait for selector or text to appear |
+| `browser_tabs` | List all tabs |
+| `browser_new_tab` | Open new tab |
+| `browser_close_tab` | Close a tab |
+| `browser_switch_tab` | Switch to a tab |
+| `browser_download` | Click download link |
+| `browser_upload` | Click file upload input |
+| `browser_cookies` | Get all cookies |
+| `browser_console` | Get console messages |
+
+###  Code Mode (8 tools)
+| Tool | Description |
+|------|-------------|
+| `file_read` | Read file with line numbers |
+| `file_write` | Write file |
+| `file_edit` | Exact string replacement (replace one or all) |
+| `grep` | Regex search across files |
+| `glob` | Find files by pattern |
+| `code_run` | Execute Python, Bash, Node, Ruby, Perl, PHP |
+| `code_lint` | Lint code (Rust, Python, JS, Shell, Go) |
+| `code_build` | Build project (auto-detect build system) |
+
+##  Security
+
+desk-mcp takes security seriously. All dangerous operations are **off by default**.
+
+| Guard | Default | What it controls |
+|-------|---------|-----------------|
+| `ALLOW_SHELL=1` | OFF | Enables `shell_run` |
+| `ALLOW_CODE=1` | OFF | Enables `code_run` |
+| `DESKMCP_WORKSPACE` | `$HOME/Projects` | Sandboxes all file operations |
+
+Set via MCP config:
+```json
+{
+  "mcpServers": {
+    "desk-mcp": {
+      "command": "desk-mcp",
       "env": {
-        "ALLOW_SHELL": "0"
+        "ALLOW_SHELL": "1",
+        "ALLOW_CODE": "1",
+        "DESKMCP_WORKSPACE": "/home/user/code"
       }
     }
   }
 }
 ```
 
-## Tools (42 total)
+##  Environment Support
 
-### Computer Use (24)
-`screenshot` `get_screen_size` `mouse_move` `mouse_click` `mouse_double_click` `mouse_scroll` `mouse_drag` `keyboard_type` `key_press` `press_hotkey` `click_on_text` `wait_for_text` `extract_text` `describe_screen` `wait` `clipboard_get` `clipboard_set` `shell_run` `list_windows` `focus_window` `get_active_window` `open_app` `notify` `type_to_window`
+| OS | Desktop | Provider | Status |
+|----|---------|----------|--------|
+| Linux | KDE (Wayland) | `kde_wayland` | Full |
+| Linux | KDE (X11) | `x11` | Partial |
+| Linux | GNOME (Wayland) | `wayland_wlr` | Partial |
+| Linux | Sway/Hyprland (wlr) | `wayland_wlr` | Partial |
+| Linux | Headless/VNC | `headless` | Screenshots only |
+| macOS | — | Not yet | Planned |
+| Windows | — | Not yet | Planned |
 
-### Browser Use (17)
-`browser_launch` `browser_navigate` `browser_click` `browser_type` `browser_screenshot` `browser_exec_js` `browser_get_html` `browser_get_text` `browser_wait_for` `browser_tabs` `browser_new_tab` `browser_close_tab` `browser_switch_tab` `browser_download` `browser_upload` `browser_cookies` `browser_console`
+### Dependencies
 
-### Discovery
-`discover` `server_status`
+```bash
+# Arch
+sudo pacman -S spectacle ydotool tesseract tesseract-data-eng chromium
 
-## Security
+# Ubuntu/Debian
+sudo apt install spectacle ydotool tesseract-ocr chromium-browser
 
-- **`ALLOW_SHELL` gate** — shell execution is disabled by default. Set `ALLOW_SHELL=1` env var to enable.
-- **No network exposure** — MCP runs over stdio, never opens ports
-- **Local-only** — designed for desktop/headless server use, not multi-tenant
+# Fedora
+sudo dnf install spectacle ydotool tesseract chromium
+```
 
-## How It Detects Your Setup
+##  Architecture
 
-At startup (<5ms), DeskMCP probes:
+```
+MCP Client (Claude, GPT, etc.)
+        │
+        ▼
+    desk-mcp (Rust binary)
+        │
+   ┌────┼─────────────┐
+   │    │              │
+   ▼    ▼              ▼
+computer  browser    code
+(24 tools) (17 tools) (8 tools)
+   │
+   ▼
+providers (pluggable backends)
+├── kde_wayland.rs  (KDE + Wayland)
+├── headless.rs     (no display)
+└── wlr.rs          (wlroots-based)
+```
 
-| Signal | Desktop (KDE) | Headless |
-|--------|--------------|----------|
-| `WAYLAND_DISPLAY` | `wayland-0` | unset |
-| `XDG_CURRENT_DESKTOP` | `KDE` | unset |
-| `XDG_SESSION_TYPE` | `wayland` | unset |
-| Browser CDP ports | Scanned from `/proc` | Launched fresh |
-| **Provider** | `wayland_kde` | `headless` |
+For detailed architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
 
-## OCR
+##  Performance
 
-Uses **Tesseract 5.5 LSTM** with TSV output for per-word bounding boxes and confidence scores. Powers `click_on_text`, `wait_for_text`, `extract_text`, and `describe_screen`.
+- **Browser**: `RwLock` for concurrent read access (no serialization on read-only ops)
+- **Discovery**: `OnceLock` caching — detection runs once, O(1) thereafter
+- **Glob**: Native Rust `glob` crate (no `find` subprocess)
+- **Release**: LTO + single codegen unit + strip = minimal binary
 
-## License
-
-MIT — do whatever you want with it.
+Built with  in Rust. MIT licensed.

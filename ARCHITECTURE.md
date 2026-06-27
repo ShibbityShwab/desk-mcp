@@ -1,217 +1,181 @@
-# DeskMCP Architecture
+# Architecture — desk-mcp
 
-## 1. System Overview
+## Overview
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                         DeskMCP (Rust)                            │
-│                                                                  │
-│  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐      │
-│  │  Computer Use  │  │  Browser Use   │  │   Discovery     │      │
-│  │  24 tools      │  │  17 tools      │  │   2 tools       │      │
-│  └───────┬────────┘  └───────┬────────┘  └───────┬────────┘      │
-│          │                   │                    │               │
-│  ┌───────┴───────────────────┴────────────────────┴────────┐     │
-│  │                Provider Layer (trait)                     │     │
-│  │  ┌─────────────────────┐  ┌──────────────────┐          │     │
-│  │  │ KDE Wayland         │  │ Headless          │          │     │
-│  │  │ spectacle, ydotool, │  │ graceful          │          │     │
-│  │  │ kdotool, wl-paste   │  │ degradation       │          │     │
-│  │  └─────────────────────┘  └──────────────────┘          │     │
-│  └─────────────────────────────┬───────────────────────────┘     │
-│                                │                                  │
-│  ┌─────────────────────────────┴───────────────────────────┐     │
-│  │          Auto-Discovery Engine                            │     │
-│  │  Detects: display type, desktop env, browser CDP ports,  │     │
-│  │  installed binaries, available capabilities              │     │
-│  └───────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
-```
+desk-mcp is a pure-Rust MCP (Model Context Protocol) server that wraps desktop
+automation primitives behind a clean, versioned JSON-RPC API. AI agents
+call tools by name with JSON arguments and receive `{ok, result, error}` responses.
 
-## 2. Transport: MCP JSON-RPC 2.0 over stdio
-
-DeskMCP implements the Model Context Protocol (MCP) with a custom JSON-RPC 2.0 handler over stdin/stdout. No third-party MCP crate — just tokio, serde_json, and a `Content-Length` header parser.
+## Layer Stack
 
 ```
-Client                        DeskMCP
-  │                              │
-  │  Content-Length: 123\r\n     │
-  │  \r\n                        │
-  │  {"jsonrpc":"2.0",...}      │
-  │ ──────────────────────────►  │  stdin reader thread
-  │                              │  → mpsc channel → async handler
-  │                 Content-Length: 456\r\n
-  │                 \r\n
-  │                 {"jsonrpc":"2.0","result":{...}}
-  │  ◄──────────────────────────  stdout writer
+┌──────────────────────────────────────┐
+│          MCP Client (AI agent)        │
+├──────────────────────────────────────┤
+│         stdin/stdout JSON-RPC        │
+│         (MCP protocol transport)      │
+├──────────────────────────────────────┤
+│            tools/mod.rs              │
+│  ┌──────────┬──────────┬──────────┐  │
+│  │ computer │ browser  │  code    │  │
+│  │ (24)     │ (17)     │ (8)      │  │
+│  └──────────┴──────────┴──────────┘  │
+├──────────────────────────────────────┤
+│       response.rs  ←  error.rs       │
+│  (unified {ok, result, error})       │
+├──────────────────────────────────────┤
+│         discovery.rs (cached)        │
+│     Environment & capability scan    │
+├──────────────────────────────────────┤
+│          providers/                  │
+│  ┌────────────┬──────────────┐       │
+│  │ kde_wayland│  headless    │       │
+│  │ (KDE+Wld) │  (no display) │       │
+│  └────────────┴──────────────┘       │
+├──────────────────────────────────────┤
+│           System tools               │
+│  spectacle, grim, ydotool, xdotool,  │
+│  tesseract, chromium                 │
+└──────────────────────────────────────┘
 ```
 
-**Methods**: `initialize`, `tools/list`, `tools/call`, `ping`, `notifications/*`
+## Key Modules
 
-## 3. Provider Pattern
+### `main.rs` — Entry Point
+- Parses `--version`, `--help`, and optional port
+- Initializes tracing subscriber
+- Starts the MCP server on stdin/stdout
 
-Rust `trait ComputerProvider` with two implementations:
+### `lib.rs` — Crate Root
+- Re-exports all public modules
+- Exposes `SERVER_NAME` and `SERVER_VERSION` constants
 
-```rust
-trait ComputerProvider {
-    fn screenshot(&self, region: Option<(i32,i32,u32,u32)>) -> Result<Vec<u8>>;
-    fn get_screen_size(&self) -> Result<ScreenSize>;
-    fn mouse_move(&self, x: i32, y: i32, smooth: bool, duration_ms: u64) -> Result<()>;
-    fn mouse_click(&self, button: &str, x: Option<i32>, y: Option<i32>, clicks: u32) -> Result<()>;
-    fn mouse_scroll(&self, dx: i32, dy: i32, x: Option<i32>, y: Option<i32>) -> Result<()>;
-    fn mouse_drag(&self, x1, y1, x2, y2, button, duration_ms) -> Result<()>;
-    fn keyboard_type(&self, text: &str, delay_ms: u64) -> Result<()>;
-    fn key_press(&self, key: &str) -> Result<()>;
-    fn clipboard_get(&self) -> Result<String>;
-    fn clipboard_set(&self, text: &str) -> Result<()>;
-    fn shell_run(&self, command: &str, timeout: u64) -> Result<ShellResult>;
-    fn list_windows(&self) -> Result<Vec<WindowInfo>>;
-    fn focus_window(&self, title: &str) -> Result<WindowMatch>;
-    fn get_active_window(&self) -> Result<Option<WindowInfo>>;
-    fn open_app(&self, name: &str) -> Result<()>;
-    fn notify(&self, title: &str, message: &str, urgency: &str) -> Result<()>;
+### `tools/mod.rs` — Tool Dispatch
+- Receives `{name, arguments}` from MCP transport
+- Routes to the appropriate handler module
+- Returns `ToolResponse` (ok or error)
+
+### `tools/computer.rs` — Computer Use (24 tools)
+- Screenshot, OCR, mouse, keyboard, shell execution
+- Window management, clipboard, notifications
+- Discovery and server status endpoints
+- All desktop interaction goes through the provider abstraction
+
+### `tools/browser.rs` — Browser Use (17 tools)
+- Chromium automation via chromiumoxide (CDP)
+- Connect to running desktop Chrome or launch headless
+- Page navigation, element interaction, JS evaluation
+- Tab management, downloads, cookies, console
+
+**Lock Architecture (optimized for concurrency):**
+- `BROWSER: RwLock<Option<BrowserState>>` — global browser handle
+- `get_page()` → `.read().await` — shared, non-blocking
+- `browser_tabs()`, `browser_cookies()` → `.read().await`
+- `browser_launch()`, `browser_new_tab()`, `browser_close_tab()`, `browser_switch_tab()` → `.write().await`
+- Per-page network calls (title, URL) happen **outside** the lock
+
+### `tools/code.rs` — Code Mode (8 tools)
+- File I/O (read, write, edit with exact string replacement)
+- Search (grep via ripgrep/grep, glob via native Rust `glob` crate)
+- Code execution (Python, Bash, Node, Ruby, Perl, PHP)
+- Linting (Ruff, Clippy, ESLint, ShellCheck, go vet)
+- Build (auto-detect Cargo, npm, Make, Go, Python)
+
+**Performance notes:**
+- All file I/O uses `tokio::fs` (async, non-blocking)
+- `glob_search` uses the native Rust `glob` crate (no `find` subprocess)
+- Failover to `find` only on glob pattern parse errors
+
+### `discovery.rs` — Environment Detection (cached)
+- Scans for installed tools (`which`)
+- Detects running browsers via `/proc`
+- Identifies display type, desktop environment, and capabilities
+- Cached via `OnceLock` — runs once, O(1) thereafter
+- `refresh_discovery()` for manual re-scan
+
+### `response.rs` — Unified Response Contract
+```json
+{
+  "ok": true,
+  "result": {...},
+  "error": null
+}
+```
+```json
+{
+  "ok": false,
+  "result": null,
+  "error": {
+    "code": "DEPENDENCY_MISSING",
+    "message": "screenshot requires spectacle: pacman -S spectacle",
+    "detail": null
+  }
 }
 ```
 
-Provider is selected once at startup via `std::sync::LazyLock` and never changes.
+### `error.rs` — Typed Error Handling
+- `McpError` enum with 13 structured variants
+- Each variant has a stable error code (e.g., `DEPENDENCY_MISSING`, `TIMEOUT`)
+- `From` impls for `serde_json::Error`, `anyhow::Error`, `std::io::Error`
+- Convenience `.code()` method for response formatting
 
-## 4. Display / Screenshot Stack
+### `ocr.rs` — OCR via Tesseract
+- Pipes image bytes to `tesseract` subprocess
+- Parses TSV output into structured `OcrItem` structs
+- `find_text()` for substring matching with confidence threshold
 
-### KDE Wayland (personal desktop)
-- **spectacle CLI** — `spectacle -b -n -f -o /tmp/file.png` (~220ms, 2560×1440)
-- Screenshot bytes are loaded into memory, optionally base64-encoded for MCP response
-- Region capture supported: `spectacle -b -n -r {x},{y},{w},{h} -o /tmp/file.png`
+## Provider Plugins
 
-### Headless
-- All screenshot calls return `DEPENDENCY_MISSING` error
-- Browser screenshots still work via chromiumoxide CDP (renders internally)
+Each provider implements the platform-specific primitives:
+- **kde_wayland.rs** — Uses spectacle (screenshots), kdotool/ydotool (input)
+- **headless.rs** — Returns env vars and filesystem info only
+- **x11.rs** (planned) — xdotool-based
+- **wlr.rs** (planned) — grim+ydotool for wlroots-based compositors
 
-## 5. Input Stack
-
-| Tool | Wayland | Headless | Notes |
-|------|---------|----------|-------|
-| **ydotool** | ✅ via `/dev/uinput` | ❌ | Mouse move, click, scroll, keyboard |
-| **kdotool** | ✅ KWin D-Bus | ❌ | Window management |
-| **wl-paste/wl-copy** | ✅ | ❌ | Clipboard |
-| **Key code mapping** | 139 entries | — | Linux input key codes → ydotool |
-
-## 6. Browser Stack
-
-### chromiumoxide (pure Rust CDP)
+## Data Flow
 
 ```
-  Browser::connect(url) → (Browser, Handler)   // connect to running Chrome
-  Browser::launch(config) → (Browser, Handler)  // headless Chromium
-  Page::goto(NavigateParams)
-  Page::screenshot(ScreenshotParams) → Vec<u8>
-  Page::evaluate(expr) → EvaluationResult
-  Page::find_element(selector) → Element
-  Element::click(), .type_str(), .press_key()
+Tool Call: "screenshot"
+  → tools/mod.rs routes to computer::handle("screenshot", args)
+  → computer::handle dispatches to providers::take_screenshot()
+  → provider runs spectacle/grim, reads PNG bytes
+  → base64-encodes PNG
+  → response::ok({image_base64: "...", format: "png"})
+  → serialized to JSON-RPC response
 ```
 
-- **Desktop mode**: `Browser::connect("http://localhost:{port}")` — finds Chrome CDP port from `/proc` scanning
-- **Headless mode**: `Browser::launch(BrowserConfig::new_headless_mode())` — fresh headless Chromium
-- Handler event stream spawned as background tokio task
-
-## 7. OCR Stack
+## Release Profile
 
 ```
-Screenshot bytes → tesseract stdin stdout --psm 6 -l eng tsv
-                        ↓
-                  Parse TSV output
-                        ↓
-            Vec<OcrItem> { text, confidence, x, y, w, h }
-                        ↓
-            find_text() → click_on_text / wait_for_text
+[profile.release]
+lto = "fat"           # Full LTO across all crates
+codegen-units = 1     # Single codegen unit for max optimization
+opt-level = 3         # Aggressive optimizations
+strip = true          # Strip debug symbols
+panic = "abort"       # Abort on panic (smaller binary, no unwind tables)
 ```
 
-Tesseract TSV provides word-level bounding boxes at level 5. Confidence filtering available for low-quality matches.
-
-## 8. Tool Dispatch
-
-```
-tools/call {"name":"screenshot","arguments":{...}}
-        │
-        ▼
-  dispatch(name, args)
-        │
-        ├─ "screenshot".."type_to_window" → computer::handle()
-        │                                      │
-        │                                      └─ PROVIDER.method()
-        │
-        ├─ "browser_launch".."browser_console" → browser::handle()
-        │                                           │
-        │                                           └─ chromiumoxide Page/Element
-        │
-        └─ "discover" / "server_status" → inline detection
-```
-
-## 9. Response Contract
-
-Every tool returns:
-
-```json
-{"ok": true, "result": {...}}
-
-{"ok": false, "result": null, "error": {"code": "COMPUTER_ERROR", "message": "..."}}
-```
-
-Error codes: `COMPUTER_ERROR`, `BROWSER_ERROR`, `UNKNOWN_TOOL`, `DEPENDENCY_MISSING`, `NOT_AVAILABLE`
-
-## 10. Project Structure
-
-```
-src/
-├── main.rs             # Entry point, JSON-RPC 2.0 stdio server
-├── lib.rs              # Library root, provider singleton, constants
-├── response.rs         # ToolResponse struct + helpers
-├── discovery.rs        # Environment auto-detection
-├── ocr.rs              # Tesseract TSV parser
-├── tools/
-│   ├── mod.rs          # 42 tool definitions with JSON schemas, dispatch
-│   ├── computer.rs     # 24 computer use handlers
-│   └── browser.rs      # 17 browser use handlers (chromiumoxide)
-└── providers/
-    ├── mod.rs          # ComputerProvider trait + factory
-    ├── kde_wayland.rs  # KDE Wayland (spectacle, ydotool, kdotool)
-    └── headless.rs     # Headless graceful degradation
-```
-
-## 11. Dependencies
+## Dependencies
 
 | Crate | Purpose |
 |-------|---------|
+| `chromiumoxide` | Chrome DevTools Protocol (pure Rust) |
+| `serde` + `serde_json` | Serialization |
 | `tokio` | Async runtime |
-| `serde` / `serde_json` | JSON-RPC messages, tool args/results |
-| `chromiumoxide` | Chrome DevTools Protocol client |
-| `enigo` | Keyboard simulation (fallback) |
-| `image` | PNG decoding for OCR prep |
-| `base64` | Screenshot encoding |
-| `arboard` | Clipboard access |
-| `tracing` / `tracing-subscriber` | Structured logging to stderr |
-| `which` | Binary detection |
-| `libc` | UID check |
-| `async-trait` | Async trait methods |
-| `anyhow` / `thiserror` | Error handling |
-| `futures` | StreamExt for CDP handler events |
+| `base64` | Image encoding |
+| `glob` | Native file globbing |
+| `which` | Binary discovery |
+| `anyhow` | Error handling |
+| `thiserror` | Typed error derivation |
+| `tracing` | Structured logging |
+| `tempfile` | Temporary file/dir creation |
 
-## 12. Performance
+## Concurrency Model
 
-| Operation | Time |
-|-----------|------|
-| Startup + detection | <5ms |
-| Screenshot (spectacle CLI) | ~220ms |
-| OCR (Tesseract TSV, 1440p) | ~50ms |
-| Mouse click (ydotool) | ~2ms |
-| Keyboard type (ydotool) | ~10ms per char |
-| Browser navigate + DOM ready | 500ms–2s |
-| Browser screenshot (CDP) | ~100ms |
+desk-mcp uses `tokio` with the multi-threaded runtime. Each MCP tool call is
+handled as a separate async task. Long-running operations (browser launch,
+shell execution) have configurable timeouts.
 
-## 13. Future Roadmap
-
-- [ ] PipeWire screencast helper (sub-50ms persistent capture)
-- [ ] RapidOCR ONNX via `ort` crate (replaces tesseract subprocess)
-- [ ] ACP transport alongside MCP
-- [ ] Wayland non-KDE provider (wlroots, GNOME)
-- [ ] X11 provider (xdotool)
-- [ ] Firefox CDP support
+**Browser state** is protected by a `tokio::sync::RwLock` to allow concurrent
+read access — multiple browser tools can operate on the same page simultaneously
+without serializing on the lock.

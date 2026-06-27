@@ -44,7 +44,7 @@ pub fn ocr(image_data: &[u8]) -> Result<Vec<OcrItem>> {
 }
 
 /// Parse tesseract TSV output (word-level, level=5)
-fn parse_tsv(tsv: &str) -> Result<Vec<OcrItem>> {
+pub fn parse_tsv(tsv: &str) -> Result<Vec<OcrItem>> {
     let mut items = Vec::new();
 
     for line in tsv.lines().skip(1) {

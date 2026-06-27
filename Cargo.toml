@@ -1,52 +1,50 @@
 [package]
 name = "desk-mcp"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
-description = "DeskMCP — full agentic desktop control MCP server for Linux. Screenshots, mouse, keyboard, OCR, window management, clipboard, shell, code execution, filesystem, and Chrome CDP browser automation. CPU-only, dual-mode (KDE Wayland + headless). 50 tools."
+description = "Full desktop control MCP server — screenshots, mouse, keyboard, OCR, browser automation, code tools"
+authors = ["ShibbityShwab"]
 license = "MIT"
 repository = "https://github.com/ShibbityShwab/desk-mcp"
+readme = "README.md"
+keywords = ["mcp", "desktop", "automation", "ocr", "browser"]
+categories = ["command-line-utilities", "development-tools"]
 
 [[bin]]
 name = "desk-mcp"
 path = "src/main.rs"
 
 [dependencies]
-# Async runtime
-tokio = { version = "1", features = ["full"] }
-
-# Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-
-# Input simulation (keyboard/mouse)
-enigo = { version = "0.6", features = ["wayland"] }
-
-# Browser automation (Chrome DevTools Protocol)
-chromiumoxide = "0.9"
-
-# Image processing
-image = "0.25"
-base64 = "0.22"
-
-# Clipboard
-arboard = "3.6"
-
-# Logging
+tokio = { version = "1", features = ["full"] }
+chromiumoxide = { version = "0.7", features = ["tokio"] }
+anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# System discovery
-which = "7"
-libc = "0.2"
-
-# Async trait support
-async-trait = "0.1"
-
-# Error handling
-anyhow = "1"
-thiserror = "2"
-
-# Utilities
-chrono = "0.4"
+base64 = "0.22"
 tempfile = "3"
 futures = "0.3"
+which = "7"
+glob = "0.3"
+thiserror = "2"
+image = "0.25"
+libc = "0.2"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tokio-test = "0.4"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 1
+
+[[bench]]
+name = "tool_benchmarks"
+harness = false

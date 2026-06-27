@@ -1,27 +1,26 @@
-//! DeskMCP — Full Agentic Desktop Control MCP Server for Linux
+//! DeskMCP — Full Desktop Control MCP Server
 //!
-//! Single MCP server providing agentic control of a Linux system.
-//! CPU-only, triple-mode: computer use + browser automation + code tools.
+//! Gives AI agents full desktop control: screenshots, mouse, keyboard,
+//! OCR, browser automation, and code tools — all through a single MCP server.
 //!
 //! ## Architecture
-//! - `providers/`  → Platform backends (KDE Wayland, headless)
-//! - `discovery.rs` → Auto-detects environment at startup
-//! - `tools/`       → All 50 tool implementations (computer, browser, code)
-//! - `response.rs`  → Unified `{ok, result, error}` contract
+//! - `providers/` — Pluggable desktop backends (KDE Wayland, headless, etc.)
+//! - `tools/` — 50 MCP tools across computer use, browser use, and code mode
+//! - `discovery.rs` — Environment detection (cached for performance)
+//! - `response.rs` — Unified tool response contract
+//! - `ocr.rs` — OCR via tesseract
 
-pub mod discovery;
-pub mod ocr;
 pub mod providers;
-pub mod response;
 pub mod tools;
+pub mod discovery;
+pub mod response;
+pub mod ocr;
+pub mod error;
 
-use std::sync::LazyLock;
-use providers::ComputerProvider;
+/// Global provider — initialized once at startup
+pub static PROVIDER: std::sync::LazyLock<
+    Box<dyn providers::ComputerProvider + Send + Sync>,
+> = std::sync::LazyLock::new(|| providers::get_provider());
 
-/// Global provider instance — initialized lazily on first use
-pub static PROVIDER: LazyLock<Box<dyn ComputerProvider + Send + Sync>> =
-    LazyLock::new(|| providers::get_provider());
-
-/// Global MCP server name
 pub const SERVER_NAME: &str = "desk-mcp";
-pub const SERVER_VERSION: &str = "0.1.0";
+pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -14,12 +14,14 @@ use chromiumoxide::{
 };
 use futures::StreamExt;
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 
-/// Global browser handle — lazily initialized, shared across calls
-static BROWSER: std::sync::LazyLock<Mutex<Option<BrowserState>>> =
-    std::sync::LazyLock::new(|| Mutex::new(None));
+/// Global browser handle — RwLock enables concurrent read access.
+/// Read-only ops (tabs, cookies, console) share the lock.
+/// Mutating ops (launch, new_tab, close_tab, switch_tab) take exclusive access.
+static BROWSER: std::sync::LazyLock<RwLock<Option<BrowserState>>> =
+    std::sync::LazyLock::new(|| RwLock::new(None));
 
 struct BrowserState {
     _browser: Browser,
@@ -67,7 +69,7 @@ async fn handle_inner(name: &str, mut args: Value) -> Result<Value, String> {
 
 /// Get the current page
 async fn get_page() -> Result<Page, String> {
-    let guard = BROWSER.lock().await;
+    let guard = BROWSER.read().await;
     match guard.as_ref() {
         Some(state) => Ok(state.current_page.clone()),
         None => Err("Browser not launched. Call browser_launch first.".into()),
@@ -115,7 +117,7 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
                         .unwrap_or_default();
                     let url = page.url().await.ok().flatten().unwrap_or_default();
 
-                    let mut guard = BROWSER.lock().await;
+                    let mut guard = BROWSER.write().await;
                     *guard = Some(BrowserState {
                         _browser: browser,
                         current_page: page,
@@ -234,7 +236,7 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
             while handler.next().await.is_some() {}
         });
 
-        let mut guard = BROWSER.lock().await;
+        let mut guard = BROWSER.write().await;
         *guard = Some(BrowserState {
             _browser: browser,
             current_page: page,
@@ -469,7 +471,7 @@ async fn browser_wait_for(page: &Page, args: &Value) -> Result<Value, String> {
 }
 
 async fn browser_tabs() -> Result<Value, String> {
-    let guard = BROWSER.lock().await;
+    let guard = BROWSER.read().await;
     let state = guard.as_ref().ok_or("Browser not launched")?;
 
     let pages = state
@@ -498,7 +500,7 @@ async fn browser_tabs() -> Result<Value, String> {
 }
 
 async fn browser_new_tab(args: &Value) -> Result<Value, String> {
-    let guard = BROWSER.lock().await;
+    let guard = BROWSER.read().await;
     let state = guard.as_ref().ok_or("Browser not launched")?;
 
     let page = state
@@ -529,7 +531,7 @@ async fn browser_new_tab(args: &Value) -> Result<Value, String> {
 async fn browser_close_tab(page: &Page, args: &Value) -> Result<Value, String> {
     // Check if a specific tab index is requested
     if let Some(idx) = args.get("index").and_then(|v| v.as_u64()) {
-        let guard = BROWSER.lock().await;
+        let guard = BROWSER.read().await;
         let state = guard.as_ref().ok_or("Browser not launched")?;
 
         let pages = state
@@ -550,7 +552,7 @@ async fn browser_close_tab(page: &Page, args: &Value) -> Result<Value, String> {
     }
 
     // Close the current page
-    let guard = BROWSER.lock().await;
+    let guard = BROWSER.read().await;
     let state = guard.as_ref().ok_or("Browser not launched")?;
 
     let pages = state
@@ -570,7 +572,7 @@ async fn browser_close_tab(page: &Page, args: &Value) -> Result<Value, String> {
 }
 
 async fn browser_switch_tab(args: &Value) -> Result<Value, String> {
-    let guard = BROWSER.lock().await;
+    let guard = BROWSER.read().await;
     let state = guard.as_ref().ok_or("Browser not launched")?;
 
     let pages = state
@@ -656,7 +658,7 @@ async fn browser_upload(page: &Page, args: &Value) -> Result<Value, String> {
 }
 
 async fn browser_cookies(_page: &Page) -> Result<Value, String> {
-    let guard = BROWSER.lock().await;
+    let guard = BROWSER.read().await;
     let state = guard.as_ref().ok_or("Browser not launched")?;
 
     let cookies = state

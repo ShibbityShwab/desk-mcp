@@ -4,6 +4,10 @@
 //! - `code_run` requires `ALLOW_CODE=1` env var (separate from `ALLOW_SHELL`)
 //! - All file paths are validated against `DESKMCP_WORKSPACE` root (default `$HOME/Projects`)
 //! - Execution tools have a 30-second default timeout, 300-second maximum
+//!
+//! ## Performance
+//! - All file I/O uses `tokio::fs` for non-blocking async operations
+//! - `glob_search` uses the native Rust `glob` crate (no `find` subprocess)
 
 use crate::response::ToolResponse;
 use serde_json::Value;
@@ -43,7 +47,6 @@ fn resolve_safe(path: &str) -> Result<PathBuf, String> {
 
     // Canonicalize, falling back to the unresolved path
     let resolved = candidate.canonicalize().unwrap_or_else(|_| {
-        // If file doesn't exist yet, normalize parent
         if let Some(parent) = candidate.parent() {
             let p = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
             p.join(candidate.file_name().unwrap_or_default())
@@ -52,7 +55,6 @@ fn resolve_safe(path: &str) -> Result<PathBuf, String> {
         }
     });
 
-    // Resolve root again to compare canonically
     let root_canon = root.canonicalize().unwrap_or_else(|_| root.clone());
 
     if !resolved.starts_with(&root_canon) {
@@ -96,7 +98,6 @@ fn run_cmd(cmd: &str, args: &[&str], timeout_secs: u64, cwd: Option<&Path>) -> R
             Ok((stdout, stderr, code))
         }
         Ok(None) => {
-            // Timed out
             let _ = child.kill();
             let _ = child.wait();
             Err(format!("Command timed out after {timeout_secs}s"))
@@ -112,7 +113,6 @@ fn run_cmd(cmd: &str, args: &[&str], timeout_secs: u64, cwd: Option<&Path>) -> R
 /// Wait for a child process with a timeout.
 /// Returns `Ok(None)` on timeout, `Ok(Some(status))` on completion.
 fn wait_timeout(child: &mut std::process::Child, timeout: Duration) -> Result<Option<std::process::ExitStatus>, String> {
-    let _pid = child.id();
     let start = std::time::Instant::now();
 
     loop {
@@ -125,7 +125,6 @@ fn wait_timeout(child: &mut std::process::Child, timeout: Duration) -> Result<Op
                 std::thread::sleep(Duration::from_millis(50));
             }
             Err(_e) => {
-                // On some platforms try_wait errors when the process is still running
                 if start.elapsed() >= timeout {
                     return Ok(None);
                 }
@@ -164,7 +163,8 @@ async fn file_read(args: Value) -> Result<Value, String> {
     let path_str = args["path"].as_str().ok_or("Missing 'path'")?;
     let path = resolve_safe(path_str)?;
 
-    let content = std::fs::read_to_string(&path)
+    let content = tokio::fs::read_to_string(&path)
+        .await
         .map_err(|e| format!("Cannot read '{}': {e}", path.display()))?;
 
     // Return with line numbers
@@ -181,12 +181,13 @@ async fn file_read(args: Value) -> Result<Value, String> {
 
     let offset = args["offset"].as_u64().unwrap_or(0) as usize;
     let limit = args["limit"].as_u64().unwrap_or(lines.len() as u64) as usize;
+    let total = lines.len();
     let slice: Vec<_> = lines.into_iter().skip(offset).take(limit).collect();
 
     Ok(serde_json::json!({
         "path": path.display().to_string(),
         "lines": slice.len(),
-        "total_lines": content.lines().count(),
+        "total_lines": total,
         "content": slice,
     }))
 }
@@ -196,13 +197,14 @@ async fn file_write(args: Value) -> Result<Value, String> {
     let content = args["content"].as_str().ok_or("Missing 'content'")?;
     let path = resolve_safe(path_str)?;
 
-    // Create parent directories
+    // Create parent directories (sync — dir creation is fast)
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Cannot create parent dir: {e}"))?;
     }
 
-    std::fs::write(&path, content)
+    tokio::fs::write(&path, content)
+        .await
         .map_err(|e| format!("Cannot write '{}': {e}", path.display()))?;
 
     let size = content.len();
@@ -222,13 +224,16 @@ async fn file_edit(args: Value) -> Result<Value, String> {
     let replace_all = args["replace_all"].as_bool().unwrap_or(false);
     let path = resolve_safe(path_str)?;
 
-    let original = std::fs::read_to_string(&path)
+    let original = tokio::fs::read_to_string(&path)
+        .await
         .map_err(|e| format!("Cannot read '{}': {e}", path.display()))?;
 
     let count = if replace_all {
         original.matches(old_string).count()
+    } else if original.contains(old_string) {
+        1
     } else {
-        if original.contains(old_string) { 1 } else { 0 }
+        0
     };
 
     if count == 0 {
@@ -248,7 +253,8 @@ async fn file_edit(args: Value) -> Result<Value, String> {
         original.replacen(old_string, new_string, 1)
     };
 
-    std::fs::write(&path, &modified)
+    tokio::fs::write(&path, &modified)
+        .await
         .map_err(|e| format!("Cannot write '{}': {e}", path.display()))?;
 
     Ok(serde_json::json!({
@@ -267,30 +273,26 @@ async fn grep(args: Value) -> Result<Value, String> {
     let case_insensitive = args["case_insensitive"].as_bool().unwrap_or(false);
     let glob_filter = args["glob"].as_str();
 
-    let _root = workspace_root();
-
     let mut cmd_args: Vec<&str> = vec!["--line-number", "--no-heading", "--color=never"];
     if case_insensitive {
         cmd_args.push("--ignore-case");
     }
 
-    // Use ripgrep if available, fall back to grep
-    let (prog, args_extra) = if which_exists("rg") {
-        let mut extra = vec![];
-        if let Some(_g) = glob_filter {
-            extra.push("--glob");
-            // We'll leak the string to satisfy 'static... or just use a different approach
-        }
-        ("rg", extra)
+    let (prog, has_glob_flag) = if which_exists("rg") {
+        ("rg", true)
     } else {
-        ("grep", vec!["-r", "-n", "--color=never"])
+        ("grep", false)
     };
 
-    // Build the full arg list
-    let mut full_args: Vec<String> = args_extra.iter().map(|s| s.to_string()).collect();
+    let mut full_args: Vec<String> = Vec::new();
+    for a in &cmd_args {
+        full_args.push(a.to_string());
+    }
     if let Some(g) = glob_filter {
-        full_args.push("--glob".to_string());
-        full_args.push(g.to_string());
+        if has_glob_flag {
+            full_args.push("--glob".to_string());
+            full_args.push(g.to_string());
+        }
     }
     full_args.push(pattern.to_string());
     full_args.push(path_str.to_string());
@@ -331,29 +333,59 @@ async fn grep(args: Value) -> Result<Value, String> {
 async fn glob_search(args: Value) -> Result<Value, String> {
     let pattern = args["pattern"].as_str().ok_or("Missing 'pattern'")?;
     let path_str = args["path"].as_str().unwrap_or(".");
-    let _root = resolve_safe(path_str)?; // validate path
+    let _ = resolve_safe(path_str)?; // validate path
 
-    // Use find for glob matching as a fallback
-    let output = std::process::Command::new("find")
-        .args([path_str, "-name", pattern, "-type", "f", "-printf", "%T@ %p\\n"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .map_err(|e| format!("Failed to run find: {e}"))?;
+    // Build the glob pattern
+    let glob_pattern = format!("{path_str}/{pattern}");
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    // Native Rust glob (fast, no subprocess)
+    let mut files: Vec<Value> = Vec::with_capacity(128);
 
-    let mut files: Vec<Value> = stdout
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|line| {
-            let parts: Vec<&str> = line.splitn(2, ' ').collect();
-            serde_json::json!({
-                "path": parts.get(1).unwrap_or(&""),
-                "mtime": parts.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0),
-            })
-        })
-        .collect();
+    match glob::glob(&glob_pattern) {
+        Ok(paths) => {
+            for entry in paths.flatten() {
+                // Only return files, not directories
+                match std::fs::metadata(&entry) {
+                    Ok(meta) if meta.is_file() => {
+                        let mtime = meta
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs_f64())
+                            .unwrap_or(0.0);
+
+                        files.push(serde_json::json!({
+                            "path": entry.display().to_string(),
+                            "mtime": mtime,
+                        }));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err(e) => {
+            // Fall back to find subprocess on glob pattern error
+            let output = std::process::Command::new("find")
+                .args([path_str, "-name", pattern, "-type", "f", "-printf", "%T@ %p\\n"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .map_err(|_e| format!("Glob error: {e}"))?;
+
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            files = stdout
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|line| {
+                    let parts: Vec<&str> = line.splitn(2, ' ').collect();
+                    serde_json::json!({
+                        "path": parts.get(1).unwrap_or(&""),
+                        "mtime": parts.first().and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0),
+                    })
+                })
+                .collect();
+        }
+    }
 
     // Sort by mtime descending (newest first)
     files.sort_by(|a, b| {
@@ -394,7 +426,6 @@ async fn code_run(args: Value) -> Result<Value, String> {
     let cwd_str = args["cwd"].as_str();
     let cwd = cwd_str.map(|c| resolve_safe(c)).transpose()?;
 
-    // Write code to a temp file
     let (ext, interpreter): (&str, &str) = match language {
         "python" | "py" => ("py", "python3"),
         "bash" | "sh" => ("sh", "bash"),
@@ -410,7 +441,8 @@ async fn code_run(args: Value) -> Result<Value, String> {
         .map_err(|e| format!("Cannot create temp dir: {e}"))?;
 
     let file_path = tmp_dir.join(format!("code_{}.{}", std::process::id(), ext));
-    std::fs::write(&file_path, code)
+    tokio::fs::write(&file_path, code)
+        .await
         .map_err(|e| format!("Cannot write temp file: {e}"))?;
 
     let (stdout, stderr, exit_code) = run_cmd(
@@ -421,7 +453,7 @@ async fn code_run(args: Value) -> Result<Value, String> {
     )?;
 
     // Clean up temp file
-    let _ = std::fs::remove_file(&file_path);
+    let _ = tokio::fs::remove_file(&file_path).await;
 
     Ok(serde_json::json!({
         "language": language,
@@ -449,18 +481,15 @@ async fn code_lint(args: Value) -> Result<Value, String> {
         _ => return Err(format!("No linter configured for '.{ext}' files. Supported: .rs, .py, .js/.ts, .sh, .go")),
     };
 
-    // For cargo clippy, we need to run it from the project root, not the file
     let cwd = if ext == "rs" {
         path.parent().map(|p| p.to_path_buf())
     } else {
         None
     };
 
-    // Resolve shellcheck file path
     let file_arg = path.display().to_string();
     let mut final_args: Vec<&str> = args_vec.clone();
 
-    // For cargo clippy, don't pass file arg (it runs on whole project)
     if ext != "rs" {
         final_args.push(&file_arg);
     }
@@ -471,7 +500,6 @@ async fn code_lint(args: Value) -> Result<Value, String> {
         60,
         cwd.as_deref(),
     ).unwrap_or_else(|e| {
-        // Linter not installed or errored
         (String::new(), e, -1)
     });
 
@@ -489,7 +517,6 @@ async fn code_build(args: Value) -> Result<Value, String> {
     let path = resolve_safe(path_str)?;
     let command = args["command"].as_str().unwrap_or("auto");
 
-    // Auto-detect build command
     let (cmd, build_args): (&str, Vec<&str>) = if command == "auto" {
         if path.join("Cargo.toml").exists() {
             ("cargo", vec!["build", "--message-format=json"])
@@ -500,13 +527,11 @@ async fn code_build(args: Value) -> Result<Value, String> {
         } else if path.join("go.mod").exists() {
             ("go", vec!["build", "./..."])
         } else if path.join("setup.py").exists() || path.join("pyproject.toml").exists() {
-            // Python doesn't really "build" — just check syntax
             ("python3", vec!["-m", "compileall", "."])
         } else {
             return Err("Could not auto-detect build system. Use 'command' parameter for custom build.".into());
         }
     } else {
-        // Custom command — split on whitespace
         let parts: Vec<&str> = command.split_whitespace().collect();
         let prog = parts.first().ok_or("Empty command")?;
         let rest: Vec<&str> = parts[1..].to_vec();
