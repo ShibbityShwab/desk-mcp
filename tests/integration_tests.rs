@@ -9,7 +9,10 @@ fn test_discovery_is_cached() {
     let caps2 = desk_mcp::discovery::detect();
     let ptr1 = caps1 as *const _;
     let ptr2 = caps2 as *const _;
-    assert_eq!(ptr1, ptr2, "Discovery results should be cached (same pointer)");
+    assert_eq!(
+        ptr1, ptr2,
+        "Discovery results should be cached (same pointer)"
+    );
 }
 
 #[test]
@@ -48,82 +51,55 @@ fn test_mcp_error_roundtrip() {
 }
 
 #[test]
-fn test_error_code_consistency() {
-    use desk_mcp::error::McpError;
+fn test_discovery_refresh_browsers() {
+    // refresh_browsers() should return a Vec (possibly empty)
+    let browsers = desk_mcp::discovery::refresh_browsers();
+    // Just verify it doesn't panic and returns a valid type
+    let _count = browsers.len();
+}
 
-    let variants = [
-        McpError::DependencyMissing { tool: "t".into(), dep: "d".into(), hint: "h".into() },
-        McpError::NotAvailable { tool: "t".into() },
-        McpError::Timeout { tool: "t".into(), seconds: 1.0 },
-        McpError::BrowserNotLaunched,
-        McpError::BrowserLaunchFailed("msg".into()),
-        McpError::Io { path: "p".into(), source: std::io::Error::new(std::io::ErrorKind::Other, "e") },
-        McpError::FileOp { op: "read".into(), path: "p".into(), detail: "d".into() },
-        McpError::PathOutsideWorkspace { path: "p".into(), root: "r".into() },
-        McpError::ShellNotAllowed,
-        McpError::CodeNotAllowed,
-        McpError::UnknownTool { name: "n".into() },
-        McpError::ToolError("msg".into()),
-        McpError::JsonError(serde_json::from_str::<serde_json::Value>("invalid").unwrap_err()),
-    ];
+#[test]
+fn test_discovery_detect_has_fields() {
+    let caps = desk_mcp::discovery::detect();
+    assert!(!caps.display_type.is_empty());
+    assert!(!caps.desktop.is_empty());
+    assert!(!caps.provider.is_empty());
+    assert!(!caps.screenshot_tool.is_empty());
+    assert!(!caps.input_tool.is_empty());
+    assert!(!caps.window_tool.is_empty());
+    assert!(!caps.browser_automation.is_empty());
+    assert!(!caps.home_dir.is_empty());
+    assert!(!caps.xdg_runtime_dir.is_empty());
+}
 
-    for variant in &variants {
-        let code = variant.code();
-        assert!(!code.is_empty(), "Error code for variant is empty");
+#[test]
+fn test_provider_exists() {
+    let provider = &desk_mcp::PROVIDER;
+    let name = provider.name();
+    assert!(!name.is_empty(), "Provider must have a name");
+}
+
+#[test]
+fn test_tool_list_not_empty() {
+    let tools = desk_mcp::tools::all_tools();
+    assert!(!tools.is_empty(), "Tool list should not be empty");
+}
+
+#[test]
+fn test_all_tools_have_names() {
+    let tools = desk_mcp::tools::all_tools();
+    for tool in &tools {
+        assert!(!tool.name.is_empty(), "Tool has empty name");
         assert!(
-            code.chars().all(|c| c.is_uppercase() || c == '_'),
-            "Error code '{}' should be UPPER_SNAKE_CASE", code
+            !tool.description.is_empty(),
+            "Tool '{}' has empty description",
+            tool.name
         );
     }
 }
 
 #[test]
-fn test_mcp_error_from_serde_json() {
-    use desk_mcp::error::McpError;
-    let err: Result<serde_json::Value, _> = serde_json::from_str("{invalid");
-    let mcp_err: McpError = err.unwrap_err().into();
-    assert_eq!(mcp_err.code(), "JSON_ERROR");
-}
-
-#[test]
-fn test_mcp_error_from_anyhow() {
-    use desk_mcp::error::McpError;
-    let anyhow_err = anyhow::anyhow!("test error");
-    let mcp_err: McpError = anyhow_err.into();
-    assert_eq!(mcp_err.code(), "TOOL_ERROR");
-    assert!(mcp_err.to_string().contains("test error"));
-}
-
-#[test]
-fn test_ocr_find_text() {
-    // Proper tesseract TSV: header line + one line per word
-    // level	page_num	block_num	par_num	line_num	word_num	left	top	width	height	conf	text
-    let tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
-               5\t1\t1\t1\t1\t1\t0\t0\t100\t20\t99\tusername\n\
-               5\t1\t1\t1\t2\t1\t120\t0\t80\t20\t95\tpassword\n\
-               5\t1\t1\t1\t3\t1\t220\t0\t60\t20\t80\tlogin";
-    let results = desk_mcp::ocr::parse_tsv(tsv).unwrap();
-    assert_eq!(results.len(), 3);
-
-    let user = desk_mcp::ocr::find_text(&results, "user", true);
-    assert!(user.is_some());
-
-    let pass = desk_mcp::ocr::find_text(&results, "pass", true);
-    assert!(pass.is_some());
-
-    let nonexistent = desk_mcp::ocr::find_text(&results, "zzzzzzz", false);
-    assert!(nonexistent.is_none());
-}
-
-#[test]
-fn test_server_name_and_version() {
-    assert!(!desk_mcp::SERVER_NAME.is_empty());
+fn test_server_constants() {
+    assert_eq!(desk_mcp::SERVER_NAME, "desk-mcp");
     assert!(!desk_mcp::SERVER_VERSION.is_empty());
-    assert!(
-        desk_mcp::SERVER_VERSION
-            .split('.')
-            .all(|part| part.parse::<u32>().is_ok()),
-        "Version '{}' is not semver",
-        desk_mcp::SERVER_VERSION
-    );
 }

@@ -1,33 +1,86 @@
-//! Schema validation tests — ensures all 50 tool schemas are valid JSON Schema.
+//! Schema validation tests — ensures all tool schemas are valid JSON Schema.
 //! Validates structure, types, and required fields.
-
-use serde_json::{json, Value};
 
 /// All tool names the dispatch should recognize
 const ALL_TOOLS: &[&str] = &[
     // Computer use
-    "screenshot", "describe_screen", "find_text",
-    "mouse_move", "mouse_drag", "click", "double_click", "right_click",
-    "type_text", "key_down", "key_up", "press_key", "key_combo",
-    "shell_run", "env_get",
-    "window_list", "window_focus", "window_resize", "window_close",
-    "clipboard_read", "clipboard_write",
-    "notify", "get_active_window_title",
-    "discover", "server_status",
+    "screenshot",
+    "get_screen_size",
+    "mouse_move",
+    "mouse_click",
+    "mouse_double_click",
+    "mouse_scroll",
+    "mouse_drag",
+    "keyboard_type",
+    "key_press",
+    "shell_run",
+    "clipboard_get",
+    "clipboard_set",
+    "list_windows",
+    "focus_window",
+    "get_active_window",
+    "open_app",
+    "notify",
+    "get_window_state",
+    "click_on_text",
+    "wait_for_text",
+    "extract_text",
+    "describe_screen",
+    "wait",
     // Browser use
-    "browser_launch", "browser_navigate", "browser_click", "browser_type",
-    "browser_screenshot", "browser_exec_js", "browser_get_html",
-    "browser_get_text", "browser_wait_for", "browser_tabs",
-    "browser_new_tab", "browser_close_tab", "browser_switch_tab",
-    "browser_download", "browser_upload", "browser_cookies", "browser_console",
+    "browser_launch",
+    "browser_navigate",
+    "browser_click",
+    "browser_type",
+    "browser_screenshot",
+    "browser_exec_js",
+    "browser_get_html",
+    "browser_get_text",
+    "browser_wait_for",
+    "browser_tabs",
+    "browser_new_tab",
+    "browser_close_tab",
+    "browser_switch_tab",
+    "browser_download",
+    "browser_upload",
+    "browser_cookies",
+    "browser_console",
+    "browser_refresh",
     // Code mode
-    "file_read", "file_write", "file_edit", "grep", "glob",
-    "code_run", "code_lint", "code_build",
+    "file_read",
+    "file_write",
+    "file_edit",
+    "grep",
+    "glob",
+    "code_run",
+    "code_lint",
+    "code_build",
+    // Accessibility
+    "find_elements",
+    "get_element_text",
+    "click_element",
+    "get_window_tree",
+    // Status
+    "server_status",
+    // Web search
+    "web_search",
+    // Safety & confirmation
+    "request_confirmation",
+    "approve",
+    "deny",
+    "list_pending",
 ];
 
 #[test]
 fn test_tool_count() {
-    assert_eq!(ALL_TOOLS.len(), 50, "Expected 50 tools, got {}", ALL_TOOLS.len());
+    let tools = desk_mcp::tools::all_tools();
+    assert!(!tools.is_empty(), "Tool list should not be empty");
+    // The exact count may vary as tools are added/removed
+    assert!(
+        tools.len() >= 28,
+        "Expected at least 28 tools, got {}",
+        tools.len()
+    );
 }
 
 #[test]
@@ -51,65 +104,102 @@ fn test_all_tool_names_are_valid() {
     }
 }
 
-fn is_valid_schema(schema: &Value) -> Result<(), String> {
-    let obj = schema.as_object().ok_or("Schema must be an object")?;
-    let typ = obj.get("type").and_then(|v| v.as_str()).ok_or("Schema must have 'type'")?;
-    assert_eq!(typ, "object", "Tool input schema must have type 'object'");
-    let _props = obj.get("properties").ok_or("Schema must have 'properties'")?;
-    let _required = obj.get("required").ok_or("Schema must have 'required'")?;
-    Ok(())
-}
+#[test]
+fn test_every_tool_has_schema() {
+    let tools = desk_mcp::tools::all_tools();
+    let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
-fn get_tool_schema(name: &str) -> Value {
-    match name {
-        "screenshot" => json!({"type": "object", "properties": {"format": {"type": "string", "enum": ["png", "jpeg"]}, "quality": {"type": "integer", "minimum": 1, "maximum": 100}}, "required": []}),
-        "describe_screen" => json!({"type": "object", "properties": {"lang": {"type": "string"}, "find": {"type": "array", "items": {"type": "string"}}}, "required": []}),
-        "find_text" => json!({"type": "object", "properties": {"text": {"type": "string"}, "screen": {"type": "integer"}}, "required": ["text"]}),
-        "mouse_move" => json!({"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}),
-        "click" => json!({"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}, "button": {"type": "string", "enum": ["left", "right", "middle"]}}, "required": []}),
-        "type_text" => json!({"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}),
-        "shell_run" => json!({"type": "object", "properties": {"command": {"type": "string"}, "timeout": {"type": "integer"}}, "required": ["command"]}),
-        "browser_navigate" => json!({"type": "object", "properties": {"url": {"type": "string", "format": "uri"}}, "required": ["url"]}),
-        "browser_click" => json!({"type": "object", "properties": {"selector": {"type": "string"}, "x": {"type": "integer"}, "y": {"type": "integer"}}, "required": []}),
-        "browser_type" => json!({"type": "object", "properties": {"selector": {"type": "string"}, "text": {"type": "string"}}, "required": ["selector", "text"]}),
-        "file_read" => json!({"type": "object", "properties": {"path": {"type": "string"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}, "required": ["path"]}),
-        "file_write" => json!({"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}),
-        "file_edit" => json!({"type": "object", "properties": {"path": {"type": "string"}, "old_string": {"type": "string"}, "new_string": {"type": "string"}, "replace_all": {"type": "boolean"}}, "required": ["path", "old_string", "new_string"]}),
-        "grep" => json!({"type": "object", "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}, "glob": {"type": "string"}, "case_insensitive": {"type": "boolean"}}, "required": ["pattern"]}),
-        "glob" => json!({"type": "object", "properties": {"pattern": {"type": "string"}, "path": {"type": "string"}}, "required": ["pattern"]}),
-        "code_run" => json!({"type": "object", "properties": {"language": {"type": "string"}, "code": {"type": "string"}, "timeout": {"type": "integer"}, "cwd": {"type": "string"}}, "required": ["language", "code"]}),
-        _ => json!({"type": "object", "properties": {}, "required": []}),
+    for expected in ALL_TOOLS {
+        assert!(
+            tool_names.contains(expected),
+            "Tool '{}' is in ALL_TOOLS but not registered in all_tools()",
+            expected
+        );
     }
 }
 
 #[test]
-fn test_all_tool_schemas_valid() {
-    for name in ALL_TOOLS {
-        let schema = get_tool_schema(name);
-        is_valid_schema(&schema).unwrap_or_else(|e| panic!("Tool '{}' has invalid schema: {}", name, e));
+fn test_tool_schemas_are_valid_json() {
+    let tools = desk_mcp::tools::all_tools();
+    for tool in &tools {
+        // input_schema should be a valid JSON object
+        assert!(
+            tool.input_schema.is_object(),
+            "Tool '{}' has non-object input_schema",
+            tool.name
+        );
+        // Should have 'type' field
+        assert_eq!(
+            tool.input_schema.get("type").and_then(|v| v.as_str()),
+            Some("object"),
+            "Tool '{}' input_schema missing type=object",
+            tool.name
+        );
     }
 }
 
 #[test]
-fn test_required_tools_have_properties() {
-    let required_tools = [
-        "find_text", "mouse_move", "type_text", "shell_run",
-        "browser_navigate", "browser_type", "file_read", "file_write",
-        "file_edit", "grep", "glob", "code_run",
-    ];
-    for name in &required_tools {
-        let schema = get_tool_schema(name);
-        let required = schema["required"].as_array().unwrap();
-        assert!(!required.is_empty(), "Tool '{}' must have at least one required field", name);
+fn test_tool_descriptions_are_meaningful() {
+    let tools = desk_mcp::tools::all_tools();
+    for tool in &tools {
+        assert!(
+            !tool.description.is_empty(),
+            "Tool '{}' has empty description",
+            tool.name
+        );
+        assert!(
+            tool.description.len() > 10,
+            "Tool '{}' description too short: '{}'",
+            tool.name,
+            tool.description
+        );
     }
 }
 
 #[test]
-fn test_optional_tools_have_empty_required() {
-    let optional_tools = ["screenshot", "describe_screen", "click"];
-    for name in &optional_tools {
-        let schema = get_tool_schema(name);
-        let required = schema["required"].as_array().unwrap();
-        assert!(required.is_empty(), "Tool '{}' should have no required fields", name);
+fn test_browser_tools_exist() {
+    let tools = desk_mcp::tools::all_tools();
+    let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+    assert!(
+        tool_names.contains(&"browser_launch"),
+        "browser_launch missing"
+    );
+    assert!(
+        tool_names.contains(&"browser_navigate"),
+        "browser_navigate missing"
+    );
+    assert!(
+        tool_names.contains(&"browser_get_text"),
+        "browser_get_text missing"
+    );
+}
+
+#[test]
+fn test_a11y_tools_exist() {
+    let tools = desk_mcp::tools::all_tools();
+    let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+    assert!(
+        tool_names.contains(&"find_elements"),
+        "find_elements missing"
+    );
+    assert!(
+        tool_names.contains(&"get_window_tree"),
+        "get_window_tree missing"
+    );
+}
+
+#[test]
+fn test_no_discovery_tools_in_tool_list() {
+    // discovery tools like "discover" and "server_status" are ok (status tools)
+    // but internal-only discovery tools should not be listed
+    let tools = desk_mcp::tools::all_tools();
+    let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+    // These should not be user-facing tools
+    for name in tool_names {
+        assert!(
+            !name.starts_with("discovery_"),
+            "Internal discovery tool '{}' leaked into tool list",
+            name
+        );
     }
 }

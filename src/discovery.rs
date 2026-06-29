@@ -45,6 +45,30 @@ pub fn detect() -> &'static Capabilities {
     DETECTED.get_or_init(detect_impl)
 }
 
+/// Rescan running browsers and validate each candidate by hitting
+/// the Chrome DevTools Protocol HTTP endpoint (`/json/version`).
+///
+/// Unlike `detect()`, this does **not** use the cached result — it
+/// rescans `/proc` on every call and validates ports via HTTP, so
+/// browsers launched *after* server start are discovered immediately.
+pub fn refresh_browsers() -> Vec<BrowserInfo> {
+    let candidates = discover_running_browsers();
+    candidates
+        .into_iter()
+        .filter(|info| {
+            if let Some(port) = info.debugging_port {
+                let url = format!("http://localhost:{port}/json/version");
+                match reqwest::blocking::get(&url) {
+                    Ok(resp) => resp.status().is_success(),
+                    Err(_) => false,
+                }
+            } else {
+                false
+            }
+        })
+        .collect()
+}
+
 /// Force a fresh re-scan of the environment. Useful after installing
 /// a dependency while the server is running.
 pub fn refresh_discovery() {
@@ -54,9 +78,8 @@ pub fn refresh_discovery() {
     // 1. desk-mcp is single-binary, no hot reload
     // 2. This is only called from MCP tool dispatch (sequential within a request)
     use std::sync::atomic::{AtomicPtr, Ordering};
-    static PTR: AtomicPtr<OnceLock<Capabilities>> = AtomicPtr::new(
-        &DETECTED as *const OnceLock<Capabilities> as *mut OnceLock<Capabilities>,
-    );
+    static PTR: AtomicPtr<OnceLock<Capabilities>> =
+        AtomicPtr::new(&DETECTED as *const OnceLock<Capabilities> as *mut OnceLock<Capabilities>);
     let new_lock = Box::new(OnceLock::new());
     let _ = new_lock.set(detect_impl());
     let new_ptr = Box::into_raw(new_lock);
@@ -68,8 +91,7 @@ pub fn refresh_discovery() {
 }
 
 fn detect_impl() -> Capabilities {
-    let home =
-        std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
     let xdg_runtime = std::env::var("XDG_RUNTIME_DIR")
         .unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
 
@@ -113,9 +135,7 @@ fn detect_impl() -> Capabilities {
             (false, false, "none".into())
         };
 
-    let screenshot_tools = [
-        "spectacle", "grim", "scrot", "import", "gnome-screenshot",
-    ];
+    let screenshot_tools = ["spectacle", "grim", "scrot", "import", "gnome-screenshot"];
     let screenshot_tool = screenshot_tools
         .iter()
         .find(|t| which::which(t).is_ok())
@@ -132,18 +152,23 @@ fn detect_impl() -> Capabilities {
     };
     let windows = window_tool != "none";
 
-    let clipboard = which::which("wl-paste").is_ok()
-        && which::which("wl-copy").is_ok()
+    let clipboard = which::which("wl-paste").is_ok() && which::which("wl-copy").is_ok()
         || which::which("xclip").is_ok();
 
     let notify = which::which("notify-send").is_ok();
-    let ocr = which::which("tesseract").is_ok();
+    let ocr = true; // pure-Rust `ocrs` crate — always available
     let browser_automation = "chromiumoxide";
 
     let browser_binaries = [
-        "google-chrome-stable", "google-chrome", "chromium",
-        "chromium-browser", "firefox", "firefox-esr", "brave",
-        "brave-browser", "microsoft-edge",
+        "google-chrome-stable",
+        "google-chrome",
+        "chromium",
+        "chromium-browser",
+        "firefox",
+        "firefox-esr",
+        "brave",
+        "brave-browser",
+        "microsoft-edge",
     ];
     let installed_browsers: Vec<_> = browser_binaries
         .iter()
@@ -193,19 +218,89 @@ fn detect_impl() -> Capabilities {
 
 fn discover_running_browsers() -> Vec<BrowserInfo> {
     let browser_names = [
-        "chrome", "chromium", "google-chrome", "brave", "edge", "opera",
+        "chrome",
+        "chromium",
+        "google-chrome",
+        "brave",
+        "edge",
+        "opera",
         "vivaldi",
     ];
 
     let mut found = Vec::new();
 
+    // Prefer pgrep(1) when available — avoids walking hundreds of /proc entries
+    // and exhausting file descriptors on machines with many processes.
+    if which::which("pgrep").is_ok() {
+        for name in &browser_names {
+            if let Ok(output) = std::process::Command::new("pgrep")
+                .arg("-x")
+                .arg(name)
+                .output()
+            {
+                if !output.status.success() {
+                    continue;
+                }
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    let pid: u32 = match line.parse() {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
+                    // Read cmdline to find debugging port
+                    let cmdline_path = format!("/proc/{pid}/cmdline");
+                    let cmdline = match std::fs::read(&cmdline_path) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+                    let args: Vec<&str> = cmdline
+                        .split(|b| *b == 0)
+                        .filter_map(|s| std::str::from_utf8(s).ok())
+                        .collect();
+                    if args.is_empty() {
+                        continue;
+                    }
+
+                    let mut port: Option<u16> = None;
+                    for (i, arg) in args.iter().enumerate() {
+                        if let Some(p) = arg.strip_prefix("--remote-debugging-port=") {
+                            port = p.parse().ok();
+                        } else if *arg == "--remote-debugging-port" && i + 1 < args.len() {
+                            port = args[i + 1].parse().ok();
+                        }
+                    }
+
+                    if let Some(port) = port {
+                        let proc_name = std::path::Path::new(args[0])
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_lowercase())
+                            .unwrap_or_default();
+                        let binary = which::which(name)
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_else(|_| args[0].to_string());
+
+                        found.push(BrowserInfo {
+                            binary: proc_name,
+                            path: binary,
+                            debugging_port: Some(port),
+                            pid: Some(pid),
+                        });
+                    }
+                }
+            }
+        }
+        return found;
+    }
+
+    // Fallback: walk /proc directly
     if let Ok(entries) = std::fs::read_dir("/proc") {
         for entry in entries.flatten() {
             let path = entry.path();
-            let pid_str = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy();
+            let pid_str = path.file_name().unwrap_or_default().to_string_lossy();
             let pid: u32 = match pid_str.parse() {
                 Ok(p) => p,
                 Err(_) => continue,
@@ -231,22 +326,15 @@ fn discover_running_browsers() -> Vec<BrowserInfo> {
                 .map(|n| n.to_string_lossy().to_lowercase())
                 .unwrap_or_default();
 
-            if !browser_names
-                .iter()
-                .any(|n| proc_name.contains(n))
-            {
+            if !browser_names.iter().any(|n| proc_name.contains(n)) {
                 continue;
             }
 
             let mut port: Option<u16> = None;
             for (i, arg) in args.iter().enumerate() {
-                if let Some(p) =
-                    arg.strip_prefix("--remote-debugging-port=")
-                {
+                if let Some(p) = arg.strip_prefix("--remote-debugging-port=") {
                     port = p.parse().ok();
-                } else if *arg == "--remote-debugging-port"
-                    && i + 1 < args.len()
-                {
+                } else if *arg == "--remote-debugging-port" && i + 1 < args.len() {
                     port = args[i + 1].parse().ok();
                 }
             }

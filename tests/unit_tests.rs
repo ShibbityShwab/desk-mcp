@@ -59,52 +59,6 @@ fn test_timeout_response() {
     assert!(err.message.contains("browser_navigate"));
 }
 
-// ── OCR TSV parsing tests ──
-
-#[test]
-fn test_parse_tsv_valid() {
-    // Word: "hello" conf 95, "world" conf 87
-    let tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
-               5\t1\t1\t1\t1\t1\t0\t0\t50\t20\t95\thello\n\
-               5\t1\t1\t1\t2\t1\t60\t0\t50\t20\t87\tworld";
-    let results = desk_mcp::ocr::parse_tsv(tsv).unwrap();
-    assert_eq!(results.len(), 2);
-    assert_eq!(results[0].text, "hello");
-    assert_eq!(results[0].confidence, 95.0);
-    assert_eq!(results[1].text, "world");
-    assert_eq!(results[1].confidence, 87.0);
-}
-
-#[test]
-fn test_parse_tsv_empty() {
-    let results = desk_mcp::ocr::parse_tsv("").unwrap();
-    assert!(results.is_empty());
-}
-
-#[test]
-fn test_parse_tsv_malformed() {
-    // Missing confidence column — text is literally "hello"
-    let tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
-               5\t1\t1\t1\t1\t1\t0\t0\t50\t20\t0\thello";
-    let results = desk_mcp::ocr::parse_tsv(tsv).unwrap();
-    assert_eq!(results.len(), 1);
-    assert_eq!(results[0].text, "hello");
-    assert_eq!(results[0].confidence, 0.0);
-}
-
-#[test]
-fn test_parse_tsv_multiple_words() {
-    let tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
-               5\t1\t1\t1\t1\t1\t0\t0\t70\t20\t99\tfoo\n\
-               5\t1\t1\t1\t2\t1\t80\t0\t30\t20\t50\tbar\n\
-               5\t1\t1\t1\t3\t1\t120\t0\t40\t20\t99\tbaz";
-    let results = desk_mcp::ocr::parse_tsv(tsv).unwrap();
-    assert_eq!(results.len(), 3);
-    assert_eq!(results[0].text, "foo");
-    assert!(results[0].confidence > 90.0);
-    assert_eq!(results[2].text, "baz");
-}
-
 // ── Response serialization tests ──
 
 #[test]
@@ -125,14 +79,6 @@ fn test_tool_response_serialization_err() {
     assert!(!json.contains("\"result\":"));
 }
 
-// ── Path validation tests ──
-
-#[test]
-fn test_workspace_root_env_var() {
-    std::env::set_var("DESKMCP_WORKSPACE", "/tmp/test_ws");
-    std::env::remove_var("DESKMCP_WORKSPACE");
-}
-
 // ── Error type tests ──
 
 #[test]
@@ -146,7 +92,10 @@ fn test_mcp_error_codes() {
     };
     assert_eq!(err.code(), "DEPENDENCY_MISSING");
 
-    let err = McpError::Timeout { tool: "x".into(), seconds: 5.0 };
+    let err = McpError::Timeout {
+        tool: "x".into(),
+        seconds: 5.0,
+    };
     assert_eq!(err.code(), "TIMEOUT");
 
     let err = McpError::BrowserNotLaunched;
@@ -167,8 +116,33 @@ fn test_mcp_error_from_io_error() {
 #[test]
 fn test_mcp_error_display() {
     use desk_mcp::error::McpError;
-    let err = McpError::NotAvailable { tool: "browser".into() };
+    let err = McpError::NotAvailable {
+        tool: "browser".into(),
+    };
     let msg = err.to_string();
     assert!(msg.contains("browser"));
     assert!(msg.contains("not available"));
+}
+
+// ── Discovery tests ──
+
+#[test]
+fn test_discovery_ocr_flag() {
+    let caps = desk_mcp::discovery::detect();
+    assert!(
+        caps.ocr,
+        "OCR should be listed as available (pure-Rust ocrs)"
+    );
+}
+
+#[test]
+fn test_discovery_browser_automation_string() {
+    let caps = desk_mcp::discovery::detect();
+    assert_eq!(caps.browser_automation, "chromiumoxide");
+}
+
+#[test]
+fn test_server_name_and_version() {
+    assert!(!desk_mcp::SERVER_NAME.is_empty());
+    assert!(!desk_mcp::SERVER_VERSION.is_empty());
 }

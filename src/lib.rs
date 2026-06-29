@@ -5,22 +5,31 @@
 //!
 //! ## Architecture
 //! - `providers/` — Pluggable desktop backends (KDE Wayland, headless, etc.)
-//! - `tools/` — 50 MCP tools across computer use, browser use, and code mode
+//! - `tools/` — 56 MCP tools across computer use, browser use, code mode, safety, and search
+//! - `safety.rs` — Confirmation, rate limiting, action logging
+//! - `vision.rs` — Screen state analysis, clickable region detection
 //! - `discovery.rs` — Environment detection (cached for performance)
 //! - `response.rs` — Unified tool response contract
-//! - `ocr.rs` — OCR via tesseract
+//! - `ocr.rs` — OCR via ocrs (pure Rust)
+//! - `error.rs` — Error types
+//! - `transport.rs` — JSON-RPC dispatch + HTTP/SSE server
 
-pub mod providers;
-pub mod tools;
+pub mod a11y;
+pub mod audit;
+pub mod auth;
 pub mod discovery;
-pub mod response;
-pub mod ocr;
 pub mod error;
+pub mod ocr;
+pub mod providers;
+pub mod response;
+pub mod safety;
+pub mod tools;
+pub mod transport;
+pub mod vision;
 
 /// Global provider — initialized once at startup
-pub static PROVIDER: std::sync::LazyLock<
-    Box<dyn providers::ComputerProvider + Send + Sync>,
-> = std::sync::LazyLock::new(|| providers::get_provider());
+pub static PROVIDER: std::sync::LazyLock<Box<dyn providers::ComputerProvider + Send + Sync>> =
+    std::sync::LazyLock::new(|| providers::get_provider());
 
 pub const SERVER_NAME: &str = "desk-mcp";
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");

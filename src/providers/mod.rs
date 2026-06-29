@@ -2,6 +2,7 @@
 
 pub mod headless;
 pub mod kde_wayland;
+pub mod kwin_dbus;
 
 use anyhow::Result;
 
@@ -21,7 +22,15 @@ pub trait ComputerProvider: Send + Sync {
     fn mouse_move(&self, x: i32, y: i32, smooth: bool, duration_ms: u64) -> Result<()>;
     fn mouse_click(&self, button: &str, x: Option<i32>, y: Option<i32>, clicks: u32) -> Result<()>;
     fn mouse_scroll(&self, dx: i32, dy: i32, x: Option<i32>, y: Option<i32>) -> Result<()>;
-    fn mouse_drag(&self, x1: i32, y1: i32, x2: i32, y2: i32, button: &str, duration_ms: u64) -> Result<()>;
+    fn mouse_drag(
+        &self,
+        x1: i32,
+        y1: i32,
+        x2: i32,
+        y2: i32,
+        button: &str,
+        duration_ms: u64,
+    ) -> Result<()>;
 
     // ── Keyboard ─────────────────────────────────────────
     fn keyboard_type(&self, text: &str, delay_ms: u64) -> Result<()>;
@@ -42,6 +51,9 @@ pub trait ComputerProvider: Send + Sync {
     // ── Apps / Notifications ─────────────────────────────
     fn open_app(&self, app_name: &str) -> Result<()>;
     fn notify(&self, title: &str, message: &str, urgency: &str) -> Result<()>;
+
+    // ── Accessibility / Element Trees ─────────────────────
+    fn get_window_state(&self) -> Result<WindowState>;
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -57,7 +69,7 @@ pub struct ShellResult {
     pub stderr: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WindowInfo {
     pub id: String,
     pub title: String,
@@ -66,7 +78,7 @@ pub struct WindowInfo {
     pub geometry: WindowGeometry,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WindowGeometry {
     pub x: i32,
     pub y: i32,
@@ -84,13 +96,53 @@ pub struct WindowMatch {
     pub candidates: Option<Vec<String>>,
 }
 
-/// Select the best provider for the current environment
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ElementBounds {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UiElement {
+    pub index: u32,
+    pub role: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub actions: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bounds: Option<ElementBounds>,
+    pub enabled: bool,
+    pub focused: bool,
+    pub children: Vec<u32>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct WindowState {
+    pub window: WindowInfo,
+    pub elements: Vec<UiElement>,
+    pub element_count: usize,
+}
+
+/// Select the best provider for the current environment.
+///
+/// Provider selection order:
+/// 1. `KWinDbusProvider` — wraps the KDE provider with native D-Bus window ops
+/// 2. `KdeWaylandProvider` — fallback to kdotool subprocess
+/// 3. `HeadlessProvider` — last resort (no display available)
 pub fn get_provider() -> Box<dyn ComputerProvider + Send + Sync> {
     let caps = crate::discovery::detect();
     match caps.provider.as_str() {
-        "wayland_kde" => Box::new(kde_wayland::KdeWaylandProvider::default()),
-        "wayland_wlr" => Box::new(kde_wayland::KdeWaylandProvider::default()),
-        "x11" => Box::new(kde_wayland::KdeWaylandProvider::default()),
-        _ => Box::new(headless::HeadlessProvider::default()),
+        "wayland_kde" => {
+            let inner = Box::new(kde_wayland::KdeWaylandProvider);
+            Box::new(kwin_dbus::KWinDbusProvider::new(inner))
+        }
+        "wayland_wlr" => Box::new(kde_wayland::KdeWaylandProvider),
+        "x11" => Box::new(kde_wayland::KdeWaylandProvider),
+        _ => Box::new(headless::HeadlessProvider),
     }
 }

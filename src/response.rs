@@ -85,9 +85,7 @@ pub fn dep_missing(tool: &str, dep: &str, hint: &str) -> ToolResponse {
 
 /// Not available in this environment
 pub fn not_available(tool: &str) -> ToolResponse {
-    from_mcp_error(McpError::NotAvailable {
-        tool: tool.into(),
-    })
+    from_mcp_error(McpError::NotAvailable { tool: tool.into() })
 }
 
 /// Timeout error

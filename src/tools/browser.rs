@@ -6,11 +6,8 @@
 use crate::response::{self, ToolResponse};
 use anyhow::Result;
 use chromiumoxide::{
-    browser::{Browser, BrowserConfig},
-    cdp::browser_protocol::target::CreateTargetParams,
-    js::EvaluationResult,
-    layout::Point,
-    Page,
+    browser::Browser, cdp::browser_protocol::target::CreateTargetParams, js::EvaluationResult,
+    layout::Point, Page,
 };
 use futures::StreamExt;
 use serde_json::Value;
@@ -28,6 +25,27 @@ struct BrowserState {
     current_page: Page,
     #[allow(dead_code)]
     is_headless: bool,
+    /// Chrome child process — killed on drop if headless.
+    #[allow(dead_code)]
+    chrome_child: Option<std::process::Child>,
+}
+
+impl Drop for BrowserState {
+    fn drop(&mut self) {
+        if let Some(ref mut child) = self.chrome_child {
+            let _ = child.kill();
+            let _ = child.wait();
+            tracing::debug!("chrome child process cleaned up");
+        }
+    }
+}
+
+/// Find a free TCP port for Chrome DevTools.
+fn find_free_port() -> Result<u16, String> {
+    use std::net::TcpListener;
+    TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("Cannot find free port: {e}"))
+        .and_then(|l| l.local_addr().map(|a| a.port()).map_err(|e| format!("{e}")))
 }
 
 /// Handle all browser tool calls
@@ -79,15 +97,14 @@ async fn get_page() -> Result<Page, String> {
 // ═══════════════════ TOOL HANDLERS ═══════════════════
 
 async fn browser_launch(args: &mut Value) -> Result<Value, String> {
-    let mode = args
-        .get("mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("auto");
+    let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("auto");
 
-    // Try connecting to an already-running browser first
+    // Try connecting to an already-running browser first.
+    // Use refresh_browsers() (not the cached detect()) so browsers
+    // launched *after* server start are discovered immediately.
     if mode == "auto" || mode == "desktop" {
-        let caps = crate::discovery::detect();
-        for info in &caps.discovered_browsers {
+        let discovered = crate::discovery::refresh_browsers();
+        for info in &discovered {
             if let Some(port) = info.debugging_port {
                 let url = format!("http://localhost:{port}");
                 if let Ok((browser, mut handler)) = Browser::connect(&url).await {
@@ -105,16 +122,9 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
                     };
 
                     // Spawn handler to consume events
-                    tokio::spawn(async move {
-                        while handler.next().await.is_some() {}
-                    });
+                    tokio::spawn(async move { while handler.next().await.is_some() {} });
 
-                    let title = page
-                        .get_title()
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap_or_default();
+                    let title = page.get_title().await.ok().flatten().unwrap_or_default();
                     let url = page.url().await.ok().flatten().unwrap_or_default();
 
                     let mut guard = BROWSER.write().await;
@@ -122,6 +132,7 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
                         _browser: browser,
                         current_page: page,
                         is_headless: false,
+                        chrome_child: None,
                     });
 
                     return Ok(serde_json::json!({
@@ -146,6 +157,33 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
         let caps = crate::discovery::detect();
         let chrome_path = caps.installed_browsers.first().map(|b| b.path.clone());
 
+        // Pre-flight: verify Chrome binary can start before attempting full launch.
+        // A simple --version check catches missing libraries, bad binaries, or
+        // permission issues in <1 second instead of a 25-second timeout.
+        if let Some(ref path) = chrome_path {
+            let test = std::process::Command::new(path).arg("--version").output();
+            match test {
+                Ok(out) if out.status.success() => {
+                    let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    tracing::info!(path = %path, version = %ver, "Chrome pre-flight OK");
+                }
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    return Err(format!(
+                        "Chrome at `{path}` failed pre-flight check (exit {}). \
+                         Stderr: {stderr}. Is the browser installed correctly?",
+                        out.status.code().unwrap_or(-1)
+                    ));
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "Cannot execute Chrome at `{path}`: {e}. \
+                         Check permissions or reinstall the browser."
+                    ));
+                }
+            }
+        }
+
         // Use a per-launch user-data-dir so stale `SingletonLock` files
         // from a previous crash don't block subsequent launches.
         let user_data_dir = tempfile::Builder::new()
@@ -153,72 +191,145 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
             .tempdir()
             .map_err(|e| format!("Failed to create user-data-dir: {e}"))?;
 
-        let extra_args = [
-            // Common headless-on-Linux stability flags. Without these,
-            // Chrome 149 can hang on launch in some environments (notably
-            // when /dev/shm is small or when GPU is unavailable).
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-setuid-sandbox",
-            "--no-first-run",
-            "--no-default-browser-check",
-        ];
+        // ── Direct Chrome launch (bypasses chromiumoxide's Browser::launch) ──
+        // We spawn Chrome ourselves so every step has its own timeout and
+        // we get meaningful diagnostics at each phase. chromiumoxide's
+        // Browser::launch() can hang indefinitely on some systems.
+        let chrome_bin = chrome_path.as_deref().ok_or(
+            "No Chrome/Chromium installation found. Install: sudo apt install chromium-browser",
+        )?;
 
-        let mut builder = BrowserConfig::builder();
-        builder = builder
-            .no_sandbox()
-            .new_headless_mode()
-            .window_size(1280, 1024)
-            .user_data_dir(user_data_dir.path())
-            .launch_timeout(Duration::from_secs(20))
-            .request_timeout(Duration::from_secs(15))
-            .args(extra_args);
-        if let Some(path) = chrome_path.as_deref() {
-            builder = builder.chrome_executable(path);
+        // Find a free TCP port for Chrome's DevTools protocol
+        let port = find_free_port()?;
+        let debug_url = format!("http://localhost:{port}");
+        tracing::info!(port = port, chrome = %chrome_bin, "launching Chrome headless");
+
+        eprintln!("[desk-mcp] Launching headless Chrome (this may take a few seconds)...");
+
+        // Spawn Chrome
+        let mut chrome_child = std::process::Command::new(chrome_bin)
+            .arg(format!("--remote-debugging-port={port}"))
+            .arg("--headless=new")
+            .arg("--no-sandbox")
+            .arg("--disable-gpu")
+            .arg("--disable-dev-shm-usage")
+            .arg("--disable-setuid-sandbox")
+            .arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            .arg("--hide-scrollbars")
+            .arg("--mute-audio")
+            .arg(format!(
+                "--user-data-dir={}",
+                user_data_dir.path().display()
+            ))
+            .arg("about:blank")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                format!(
+                    "Cannot start Chrome at `{chrome_bin}`: {e}. \
+                 Verify the browser is installed and executable."
+                )
+            })?;
+
+        // Wait for Chrome's DevTools endpoint to become ready.
+        // We poll /json/version because stderr parsing is fragile across versions.
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+        let version_url = format!("{debug_url}/json/version");
+        let start = std::time::Instant::now();
+        let deadline = start + Duration::from_secs(20);
+        let mut connected = false;
+
+        while std::time::Instant::now() < deadline {
+            match client.get(&version_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    connected = true;
+                    break;
+                }
+                _ => {
+                    tokio::time::sleep(Duration::from_millis(300)).await;
+                }
+            }
         }
 
-        let config = builder
-            .build()
-            .map_err(|e| format!("Invalid browser config: {e}"))?;
+        if !connected {
+            // Kill the Chrome child
+            let _ = chrome_child.kill();
+            let _ = chrome_child.wait();
+            // Read any stderr for diagnostics
+            let stderr_out = chrome_child
+                .stderr
+                .take()
+                .and_then(|mut p| {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    p.read_to_string(&mut buf).ok().map(|_| buf)
+                })
+                .unwrap_or_default();
+            return Err(format!(
+                "Chrome started but DevTools did not respond within 20s. \
+                 Port: {port}. Chrome stderr: {stderr_out:.200} \
+                 Try: chrome --headless=new --no-sandbox --remote-debugging-port={port} about:blank"
+            ));
+        }
 
-        // Wrap the entire launch future in a hard timeout. chromiumoxide's
-        // own `launch_timeout` only bounds the wait for the DevTools websocket
-        // URL on chrome's stderr — it does NOT bound the rest of the launch
-        // path (e.g. CDP handshake). Without this outer wrapper, a chrome
-        // child that starts but then hangs leaves the entire MCP call
-        // stuck forever. On timeout, the future is dropped, which drops
-        // the inner `Browser` instance, which (because `kill_on_drop`
-        // defaults to true in chromiumoxide) kills the chrome child.
-        const LAUNCH_TIMEOUT_SECS: u64 = 25;
-        let launch_result = tokio::time::timeout(
-            Duration::from_secs(LAUNCH_TIMEOUT_SECS),
-            Browser::launch(config),
-        )
-        .await;
+        tracing::info!(
+            port = port,
+            elapsed_ms = start.elapsed().as_millis(),
+            "Chrome DevTools ready"
+        );
 
-        let (browser, mut handler) = match launch_result {
+        // Fetch the WebSocket URL from /json/version using our own reqwest
+        // (chromiumoxide's internal reqwest 0.13 can hang on some systems).
+        let version_body = client
+            .get(&version_url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch /json/version: {e}"))?
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read /json/version body: {e}"))?;
+
+        let version_json: serde_json::Value = serde_json::from_str(&version_body)
+            .map_err(|e| format!("Failed to parse /json/version: {e}"))?;
+
+        let ws_url_raw = version_json["webSocketDebuggerUrl"]
+            .as_str()
+            .ok_or("No webSocketDebuggerUrl in /json/version response")?;
+
+        // Replace localhost with 127.0.0.1 — some async-tungstenite builds
+        // hang on localhost DNS resolution under tokio.
+        let ws_url = ws_url_raw.replace("localhost", "127.0.0.1");
+
+        tracing::info!(ws_url = %ws_url, "connecting to Chrome DevTools WebSocket");
+
+        // Connect via chromiumoxide — pass the WebSocket URL directly so
+        // chromiumoxide's internal HTTP client (reqwest 0.13) is never used.
+        let connect_result =
+            tokio::time::timeout(Duration::from_secs(10), Browser::connect(ws_url)).await;
+
+        let (browser, mut handler) = match connect_result {
             Ok(Ok(pair)) => pair,
             Ok(Err(e)) => {
+                let _ = chrome_child.kill();
+                let _ = chrome_child.wait();
                 return Err(format!(
-                    "Failed to launch browser: {e}. \
-                     Detected browser path: `{}`. \
-                     User-data-dir: `{}`. \
-                     Try running the browser manually to diagnose.",
-                    chrome_path
-                        .clone()
-                        .unwrap_or_else(|| "<no browser detected>".into()),
-                    user_data_dir.path().display()
+                    "Chrome DevTools is listening on port {port} but CDP handshake failed: {e}. \
+                     Try: chrome --headless=new --no-sandbox --remote-debugging-port={port} about:blank"
                 ));
             }
             Err(_elapsed) => {
+                let _ = chrome_child.kill();
+                let _ = chrome_child.wait();
                 return Err(format!(
-                    "Browser launch timed out after {LAUNCH_TIMEOUT_SECS}s — \
-                     Chrome did not become responsive. Detected browser path: \
-                     `{}`. User-data-dir: `{}`.",
-                    chrome_path
-                        .clone()
-                        .unwrap_or_else(|| "<no browser detected>".into()),
-                    user_data_dir.path().display()
+                    "CDP handshake timed out after 10s on port {port}. \
+                     Chrome is running but not accepting WebSocket connections. \
+                     Check if a firewall is blocking localhost:{port}."
                 ));
             }
         };
@@ -232,15 +343,14 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
             .map_err(|e| format!("Failed to create page: {e}"))?;
 
         // Spawn handler to consume events
-        tokio::spawn(async move {
-            while handler.next().await.is_some() {}
-        });
+        tokio::spawn(async move { while handler.next().await.is_some() {} });
 
         let mut guard = BROWSER.write().await;
         *guard = Some(BrowserState {
             _browser: browser,
             current_page: page,
             is_headless: true,
+            chrome_child: Some(chrome_child),
         });
 
         return Ok(serde_json::json!({
@@ -257,8 +367,7 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
 async fn browser_navigate(page: &Page, args: &Value) -> Result<Value, String> {
     let url = args["url"].as_str().ok_or("url is required")?;
 
-    let nav: chromiumoxide::cdp::browser_protocol::page::NavigateParams =
-        url.into();
+    let nav: chromiumoxide::cdp::browser_protocol::page::NavigateParams = url.into();
 
     page.goto(nav)
         .await
@@ -413,10 +522,7 @@ async fn browser_get_text(page: &Page, args: &Value) -> Result<Value, String> {
 }
 
 async fn browser_wait_for(page: &Page, args: &Value) -> Result<Value, String> {
-    let timeout = args
-        .get("timeout")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(30.0);
+    let timeout = args.get("timeout").and_then(|v| v.as_f64()).unwrap_or(30.0);
 
     if let Some(selector) = args.get("selector").and_then(|v| v.as_str()) {
         let start = std::time::Instant::now();
@@ -424,7 +530,9 @@ async fn browser_wait_for(page: &Page, args: &Value) -> Result<Value, String> {
             if let Ok(_elm) = page.find_element(selector).await {
                 // Found it! Get the tag name
                 let sel_escaped = selector.replace('\\', "\\\\").replace('\'', "\\'");
-                let script = format!("document.querySelector('{sel_escaped}')?.tagName?.toLowerCase() || ''");
+                let script = format!(
+                    "document.querySelector('{sel_escaped}')?.tagName?.toLowerCase() || ''"
+                );
                 let tag: String = page
                     .evaluate(script.as_str())
                     .await
@@ -510,8 +618,7 @@ async fn browser_new_tab(args: &Value) -> Result<Value, String> {
         .map_err(|e| format!("Failed to create new page: {e}"))?;
 
     if let Some(url) = args.get("url").and_then(|v| v.as_str()) {
-        let nav: chromiumoxide::cdp::browser_protocol::page::NavigateParams =
-            url.into();
+        let nav: chromiumoxide::cdp::browser_protocol::page::NavigateParams = url.into();
         page.goto(nav)
             .await
             .map_err(|e| format!("Navigate failed: {e}"))?;

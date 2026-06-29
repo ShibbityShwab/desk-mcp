@@ -2,7 +2,7 @@
 //!
 //! ## Guardrails
 //! - `code_run` requires `ALLOW_CODE=1` env var (separate from `ALLOW_SHELL`)
-//! - All file paths are validated against `DESKMCP_WORKSPACE` root (default `$HOME/Projects`)
+//! - All file paths are validated against `DESKMCP_WORKSPACE` root (default: current working directory)
 //! - Execution tools have a 30-second default timeout, 300-second maximum
 //!
 //! ## Performance
@@ -17,18 +17,20 @@ use std::time::Duration;
 
 /// Resolve the workspace root. Order of precedence:
 ///   1. `DESKMCP_WORKSPACE` env var
-///   2. `$HOME/Projects`
-///   3. `/tmp/deskmcp_workspace` (fallback)
+///   2. Current working directory (most intuitive for CLI usage)
+///   3. `$HOME/Projects`
+///   4. `/tmp/deskmcp_workspace` (fallback)
 fn workspace_root() -> PathBuf {
     if let Ok(root) = std::env::var("DESKMCP_WORKSPACE") {
         return PathBuf::from(root);
     }
+    // Use current working directory for intuitive CLI behavior
+    if let Ok(cwd) = std::env::current_dir() {
+        tracing::debug!(workspace = %cwd.display(), "using CWD as workspace root");
+        return cwd;
+    }
     if let Ok(home) = std::env::var("HOME") {
-        let p = PathBuf::from(&home).join("Projects");
-        if p.exists() {
-            return p;
-        }
-        return PathBuf::from(home);
+        return PathBuf::from(home).join("Projects");
     }
     PathBuf::from("/tmp/deskmcp_workspace")
 }
@@ -48,7 +50,9 @@ fn resolve_safe(path: &str) -> Result<PathBuf, String> {
     // Canonicalize, falling back to the unresolved path
     let resolved = candidate.canonicalize().unwrap_or_else(|_| {
         if let Some(parent) = candidate.parent() {
-            let p = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+            let p = parent
+                .canonicalize()
+                .unwrap_or_else(|_| parent.to_path_buf());
             p.join(candidate.file_name().unwrap_or_default())
         } else {
             candidate.clone()
@@ -59,9 +63,11 @@ fn resolve_safe(path: &str) -> Result<PathBuf, String> {
 
     if !resolved.starts_with(&root_canon) {
         return Err(format!(
-            "Path '{}' is outside workspace root '{}'",
-            path,
-            root_canon.display()
+            "Path '{path}' is outside workspace root '{}'. \
+             Use an absolute path within the workspace, or set DESKMCP_WORKSPACE \
+             to a different root directory. Current workspace: '{}'",
+            root_canon.display(),
+            root_canon.display(),
         ));
     }
 
@@ -69,7 +75,12 @@ fn resolve_safe(path: &str) -> Result<PathBuf, String> {
 }
 
 /// Run a shell command with timeout. Returns (stdout, stderr, exit_code).
-fn run_cmd(cmd: &str, args: &[&str], timeout_secs: u64, cwd: Option<&Path>) -> Result<(String, String, i32), String> {
+fn run_cmd(
+    cmd: &str,
+    args: &[&str],
+    timeout_secs: u64,
+    cwd: Option<&Path>,
+) -> Result<(String, String, i32), String> {
     let mut child = Command::new(cmd)
         .args(args)
         .stdout(std::process::Stdio::piped())
@@ -78,21 +89,25 @@ fn run_cmd(cmd: &str, args: &[&str], timeout_secs: u64, cwd: Option<&Path>) -> R
         .spawn()
         .map_err(|e| format!("Failed to spawn '{cmd}': {e}"))?;
 
-    let timeout = Duration::from_secs(timeout_secs.min(300).max(1));
+    let timeout = Duration::from_secs(timeout_secs.clamp(1, 300));
 
     match wait_timeout(&mut child, timeout) {
         Ok(Some(status)) => {
-            let stdout = String::from_utf8_lossy(&child.stdout.take().map_or_else(Vec::new, |mut p| {
-                let mut buf = String::new();
-                std::io::Read::read_to_string(&mut p, &mut buf).unwrap_or_default();
-                buf.into_bytes()
-            })).to_string();
+            let stdout =
+                String::from_utf8_lossy(&child.stdout.take().map_or_else(Vec::new, |mut p| {
+                    let mut buf = String::new();
+                    std::io::Read::read_to_string(&mut p, &mut buf).unwrap_or_default();
+                    buf.into_bytes()
+                }))
+                .to_string();
 
-            let stderr = String::from_utf8_lossy(&child.stderr.take().map_or_else(Vec::new, |mut p| {
-                let mut buf = String::new();
-                std::io::Read::read_to_string(&mut p, &mut buf).unwrap_or_default();
-                buf.into_bytes()
-            })).to_string();
+            let stderr =
+                String::from_utf8_lossy(&child.stderr.take().map_or_else(Vec::new, |mut p| {
+                    let mut buf = String::new();
+                    std::io::Read::read_to_string(&mut p, &mut buf).unwrap_or_default();
+                    buf.into_bytes()
+                }))
+                .to_string();
 
             let code = status.code().unwrap_or(-1);
             Ok((stdout, stderr, code))
@@ -112,7 +127,10 @@ fn run_cmd(cmd: &str, args: &[&str], timeout_secs: u64, cwd: Option<&Path>) -> R
 
 /// Wait for a child process with a timeout.
 /// Returns `Ok(None)` on timeout, `Ok(Some(status))` on completion.
-fn wait_timeout(child: &mut std::process::Child, timeout: Duration) -> Result<Option<std::process::ExitStatus>, String> {
+fn wait_timeout(
+    child: &mut std::process::Child,
+    timeout: Duration,
+) -> Result<Option<std::process::ExitStatus>, String> {
     let start = std::time::Instant::now();
 
     loop {
@@ -199,8 +217,7 @@ async fn file_write(args: Value) -> Result<Value, String> {
 
     // Create parent directories (sync — dir creation is fast)
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Cannot create parent dir: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Cannot create parent dir: {e}"))?;
     }
 
     tokio::fs::write(&path, content)
@@ -237,7 +254,11 @@ async fn file_edit(args: Value) -> Result<Value, String> {
     };
 
     if count == 0 {
-        return Err(format!("String not found in '{}': {}", path.display(), old_string));
+        return Err(format!(
+            "String not found in '{}': {}",
+            path.display(),
+            old_string
+        ));
     }
 
     if !replace_all && count > 1 {
@@ -366,7 +387,15 @@ async fn glob_search(args: Value) -> Result<Value, String> {
         Err(e) => {
             // Fall back to find subprocess on glob pattern error
             let output = std::process::Command::new("find")
-                .args([path_str, "-name", pattern, "-type", "f", "-printf", "%T@ %p\\n"])
+                .args([
+                    path_str,
+                    "-name",
+                    pattern,
+                    "-type",
+                    "f",
+                    "-printf",
+                    "%T@ %p\\n",
+                ])
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null())
                 .output()
@@ -389,7 +418,9 @@ async fn glob_search(args: Value) -> Result<Value, String> {
 
     // Sort by mtime descending (newest first)
     files.sort_by(|a, b| {
-        b["mtime"].as_f64().unwrap_or(0.0)
+        b["mtime"]
+            .as_f64()
+            .unwrap_or(0.0)
             .partial_cmp(&a["mtime"].as_f64().unwrap_or(0.0))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
@@ -417,14 +448,19 @@ fn code_allowed() -> bool {
 
 async fn code_run(args: Value) -> Result<Value, String> {
     if !code_allowed() {
-        return Err("ALLOW_CODE=1 is required for code execution. Set it in the MCP server environment.".into());
+        return Err(
+            "ALLOW_CODE=1 is required for code execution. Set it in the MCP server environment."
+                .into(),
+        );
     }
 
-    let language = args["language"].as_str().ok_or("Missing 'language' (e.g. 'python', 'bash', 'node')")?;
+    let language = args["language"]
+        .as_str()
+        .ok_or("Missing 'language' (e.g. 'python', 'bash', 'node')")?;
     let code = args["code"].as_str().ok_or("Missing 'code'")?;
-    let timeout = args["timeout"].as_u64().unwrap_or(30).min(300).max(1);
+    let timeout = args["timeout"].as_u64().unwrap_or(30).clamp(1, 300);
     let cwd_str = args["cwd"].as_str();
-    let cwd = cwd_str.map(|c| resolve_safe(c)).transpose()?;
+    let cwd = cwd_str.map(resolve_safe).transpose()?;
 
     let (ext, interpreter): (&str, &str) = match language {
         "python" | "py" => ("py", "python3"),
@@ -433,12 +469,15 @@ async fn code_run(args: Value) -> Result<Value, String> {
         "ruby" | "rb" => ("rb", "ruby"),
         "perl" | "pl" => ("pl", "perl"),
         "php" => ("php", "php"),
-        _ => return Err(format!("Unsupported language: {language}. Supported: python, bash, node, ruby, perl, php")),
+        _ => {
+            return Err(format!(
+                "Unsupported language: {language}. Supported: python, bash, node, ruby, perl, php"
+            ))
+        }
     };
 
     let tmp_dir = std::env::temp_dir().join("deskmcp_code");
-    std::fs::create_dir_all(&tmp_dir)
-        .map_err(|e| format!("Cannot create temp dir: {e}"))?;
+    std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("Cannot create temp dir: {e}"))?;
 
     let file_path = tmp_dir.join(format!("code_{}.{}", std::process::id(), ext));
     tokio::fs::write(&file_path, code)
@@ -465,12 +504,13 @@ async fn code_run(args: Value) -> Result<Value, String> {
 }
 
 async fn code_lint(args: Value) -> Result<Value, String> {
-    let path_str = args["path"].as_str().or(args["file"].as_str()).ok_or("Missing 'path'")?;
+    let path_str = args["path"]
+        .as_str()
+        .or(args["file"].as_str())
+        .ok_or("Missing 'path'")?;
     let path = resolve_safe(path_str)?;
 
-    let ext = path.extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     let (linter, args_vec): (&str, Vec<&str>) = match ext {
         "rs" => ("cargo", vec!["clippy", "--message-format=json"]),
@@ -478,7 +518,11 @@ async fn code_lint(args: Value) -> Result<Value, String> {
         "js" | "ts" | "jsx" | "tsx" => ("npx", vec!["eslint", "--format=json"]),
         "sh" | "bash" => ("shellcheck", vec!["-f", "json"]),
         "go" => ("go", vec!["vet"]),
-        _ => return Err(format!("No linter configured for '.{ext}' files. Supported: .rs, .py, .js/.ts, .sh, .go")),
+        _ => {
+            return Err(format!(
+                "No linter configured for '.{ext}' files. Supported: .rs, .py, .js/.ts, .sh, .go"
+            ))
+        }
     };
 
     let cwd = if ext == "rs" {
@@ -494,14 +538,8 @@ async fn code_lint(args: Value) -> Result<Value, String> {
         final_args.push(&file_arg);
     }
 
-    let (stdout, stderr, exit_code) = run_cmd(
-        linter,
-        &final_args,
-        60,
-        cwd.as_deref(),
-    ).unwrap_or_else(|e| {
-        (String::new(), e, -1)
-    });
+    let (stdout, stderr, exit_code) =
+        run_cmd(linter, &final_args, 60, cwd.as_deref()).unwrap_or_else(|e| (String::new(), e, -1));
 
     Ok(serde_json::json!({
         "path": path.display().to_string(),
@@ -513,7 +551,9 @@ async fn code_lint(args: Value) -> Result<Value, String> {
 }
 
 async fn code_build(args: Value) -> Result<Value, String> {
-    let path_str = args["path"].as_str().ok_or("Missing 'path' (project directory)")?;
+    let path_str = args["path"]
+        .as_str()
+        .ok_or("Missing 'path' (project directory)")?;
     let path = resolve_safe(path_str)?;
     let command = args["command"].as_str().unwrap_or("auto");
 
@@ -529,7 +569,10 @@ async fn code_build(args: Value) -> Result<Value, String> {
         } else if path.join("setup.py").exists() || path.join("pyproject.toml").exists() {
             ("python3", vec!["-m", "compileall", "."])
         } else {
-            return Err("Could not auto-detect build system. Use 'command' parameter for custom build.".into());
+            return Err(
+                "Could not auto-detect build system. Use 'command' parameter for custom build."
+                    .into(),
+            );
         }
     } else {
         let parts: Vec<&str> = command.split_whitespace().collect();
@@ -538,14 +581,9 @@ async fn code_build(args: Value) -> Result<Value, String> {
         (prog, rest)
     };
 
-    let timeout = args["timeout"].as_u64().unwrap_or(120).min(300).max(5);
+    let timeout = args["timeout"].as_u64().unwrap_or(120).clamp(5, 300);
 
-    let (stdout, stderr, exit_code) = run_cmd(
-        cmd,
-        &build_args,
-        timeout,
-        Some(&path),
-    )?;
+    let (stdout, stderr, exit_code) = run_cmd(cmd, &build_args, timeout, Some(&path))?;
 
     Ok(serde_json::json!({
         "path": path.display().to_string(),

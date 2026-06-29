@@ -18,7 +18,7 @@ path = "src/main.rs"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
-chromiumoxide = { version = "0.7", features = ["tokio"] }
+chromiumoxide = { version = "0.9" }
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -30,6 +30,19 @@ glob = "0.3"
 thiserror = "2"
 image = "0.25"
 libc = "0.2"
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors"] }
+leptess = "0.14"
+dirs-next = "2.0.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+urlencoding = "2"
+reqwest = { version = "0.12", default-features = true, features = ["blocking"] }
+arboard = "3"
+notify-rust = "4"
+enigo = { version = "0.3", default-features = false, features = ["x11rb"] }
+wdotool-core = "0.5"
+zbus = { version = "5", features = ["tokio"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

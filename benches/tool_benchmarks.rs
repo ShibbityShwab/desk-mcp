@@ -36,34 +36,43 @@ fn bench_tool_dispatch(c: &mut Criterion) {
 }
 
 fn bench_ocr_parse(c: &mut Criterion) {
-    let tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n\
-               5\t1\t1\t1\t1\t1\t0\t0\t80\t20\t99\tbenchmark\n\
-               5\t1\t1\t1\t2\t1\t90\t0\t40\t20\t95\ttext\n\
-               5\t1\t1\t1\t3\t1\t140\t0\t70\t20\t90\tparsing\n\
-               5\t1\t1\t1\t4\t1\t220\t0\t60\t20\t85\troutine\n\
-               5\t1\t1\t1\t5\t1\t290\t0\t45\t20\t80\tspeed\n\
-               5\t1\t1\t1\t6\t1\t340\t0\t40\t20\t75\ttest\n\
-               5\t1\t1\t1\t7\t1\t390\t0\t110\t20\t70\tperformance\n\
-               5\t1\t1\t1\t8\t1\t510\t0\t70\t20\t65\tanalysis\n\
-               5\t1\t1\t1\t9\t1\t590\t0\t50\t20\t60\tresult\n\
-               5\t1\t1\t1\t10\t1\t650\t0\t55\t20\t55\toutput\n\
-               5\t1\t1\t1\t11\t1\t715\t0\t45\t20\t50\tinput\n\
-               5\t1\t1\t1\t12\t1\t770\t0\t60\t20\t45\tsample\n\
-               5\t1\t1\t1\t13\t1\t840\t0\t50\t20\t40\tvalue\n\
-               5\t1\t1\t1\t14\t1\t900\t0\t40\t20\t35\tdata\n\
-               5\t1\t1\t1\t15\t1\t950\t0\t50\t20\t30\tcheck";
+    // OCR benches require Tesseract + traineddata at runtime.
+    // Test with synthetic OcrItems to benchmark find_text path.
+    let items: Vec<desk_mcp::ocr::OcrItem> = [
+        "benchmark",
+        "text",
+        "parsing",
+        "routine",
+        "speed",
+        "test",
+        "performance",
+        "analysis",
+        "result",
+        "output",
+        "input",
+        "sample",
+        "value",
+        "data",
+        "check",
+    ]
+    .iter()
+    .map(|t| desk_mcp::ocr::OcrItem {
+        text: t.to_string(),
+        bounds: None,
+        confidence: 1.0,
+    })
+    .collect();
 
-    c.bench_function("ocr_parse_15_words", |b| {
+    c.bench_function("ocr_find_text_exact", |b| {
         b.iter(|| {
-            let results = desk_mcp::ocr::parse_tsv(black_box(tsv)).unwrap();
-            black_box(results.len());
+            let found = desk_mcp::ocr::find_text(black_box(&items), "benchmark", false);
+            black_box(found.is_some());
         })
     });
 
-    c.bench_function("ocr_find_text", |b| {
-        let results = desk_mcp::ocr::parse_tsv(tsv).unwrap();
+    c.bench_function("ocr_find_text_partial", |b| {
         b.iter(|| {
-            let found = desk_mcp::ocr::find_text(black_box(&results), "bench", false);
+            let found = desk_mcp::ocr::find_text(black_box(&items), "perf", true);
             black_box(found.is_some());
         })
     });
@@ -95,7 +104,10 @@ fn bench_error_types(c: &mut Criterion) {
     });
 
     c.bench_function("error_code", |b| {
-        let err = McpError::Timeout { tool: "test".into(), seconds: 30.0 };
+        let err = McpError::Timeout {
+            tool: "test".into(),
+            seconds: 30.0,
+        };
         b.iter(|| {
             let code = err.code();
             black_box(code);
