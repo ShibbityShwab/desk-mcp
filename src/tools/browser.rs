@@ -20,7 +20,7 @@ use tokio::time::{sleep, Duration};
 static BROWSER: std::sync::LazyLock<RwLock<Option<BrowserState>>> =
     std::sync::LazyLock::new(|| RwLock::new(None));
 
-struct BrowserState {
+pub(crate) struct BrowserState {
     _browser: Browser,
     current_page: Page,
     #[allow(dead_code)]
@@ -49,19 +49,19 @@ fn find_free_port() -> Result<u16, String> {
 }
 
 /// Handle all browser tool calls
-pub async fn handle(name: &str, args: Value) -> ToolResponse {
-    let result = handle_inner(name, args).await;
+pub async fn handle(name: &str, args: Value, session_id: Option<&str>) -> ToolResponse {
+    let result = handle_inner(name, args, session_id).await;
     match result {
         Ok(value) => response::ok(value),
         Err(message) => response::err("BROWSER_ERROR", &message),
     }
 }
 
-async fn handle_inner(name: &str, mut args: Value) -> Result<Value, String> {
+async fn handle_inner(name: &str, mut args: Value, session_id: Option<&str>) -> Result<Value, String> {
     match name {
-        "browser_launch" => browser_launch(&mut args).await,
+        "browser_launch" => browser_launch(&mut args, session_id).await,
         _ => {
-            let page = get_page().await?;
+            let page = get_page_for_session(session_id).await?;
             match name {
                 "browser_navigate" => browser_navigate(&page, &args).await,
                 "browser_click" => browser_click(&page, &args).await,
@@ -85,8 +85,13 @@ async fn handle_inner(name: &str, mut args: Value) -> Result<Value, String> {
     }
 }
 
+/// Check whether a browser is connected (useful for Tier-2 resolution gating).
+pub async fn is_connected() -> bool {
+    BROWSER.read().await.is_some()
+}
+
 /// Get the current page
-async fn get_page() -> Result<Page, String> {
+pub async fn get_page() -> Result<Page, String> {
     let guard = BROWSER.read().await;
     match guard.as_ref() {
         Some(state) => Ok(state.current_page.clone()),
@@ -94,9 +99,77 @@ async fn get_page() -> Result<Page, String> {
     }
 }
 
+/// Get the current page, preferring session browser state over global.
+pub async fn get_page_for_session(session_id: Option<&str>) -> Result<Page, String> {
+    if let Some(id) = session_id {
+        if let Some(session) = crate::session::SESSIONS.get_session(&id.to_string()) {
+            let guard = session.browser_page.read().await;
+            if let Some(ref page) = *guard {
+                return Ok(page.clone());
+            }
+        }
+    }
+    // Fallback to global
+    get_page().await
+}
+
+// ═══════════════════ HELPERS ═══════════════════
+
+/// Connect to a running Chrome DevTools endpoint on localhost.
+///
+/// Uses a custom reqwest client with timeouts to fetch `/json/version`,
+/// then passes the WebSocket URL directly to `Browser::connect()` wrapped
+/// in a 10s timeout. This avoids chromiumoxide's internal HTTP client
+/// (reqwest 0.13) which can hang indefinitely on some systems.
+async fn connect_to_cdp_port(
+    port: u16,
+) -> Result<(Browser, chromiumoxide::handler::Handler), String>
+{
+    let version_url = format!("http://localhost:{port}/json/version");
+
+    // Custom reqwest client with timeouts
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
+    let version_body = client
+        .get(&version_url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to reach Chrome DevTools on port {port}: {e}"))?
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read /json/version on port {port}: {e}"))?;
+
+    let version_json: serde_json::Value = serde_json::from_str(&version_body)
+        .map_err(|e| format!("Failed to parse /json/version on port {port}: {e}"))?;
+
+    let ws_url_raw = version_json["webSocketDebuggerUrl"]
+        .as_str()
+        .ok_or_else(|| format!("No webSocketDebuggerUrl in /json/version response on port {port}"))?;
+
+    // Replace localhost with 127.0.0.1 — some async-tungstenite builds
+    // hang on localhost DNS resolution under tokio.
+    let ws_url = ws_url_raw.replace("localhost", "127.0.0.1");
+
+    tracing::info!(port = port, ws_url = %ws_url, "connecting to Chrome DevTools WebSocket");
+
+    let connect_result =
+        tokio::time::timeout(Duration::from_secs(10), Browser::connect(ws_url)).await;
+
+    match connect_result {
+        Ok(Ok(pair)) => Ok(pair),
+        Ok(Err(e)) => Err(format!("CDP handshake failed on port {port}: {e}")),
+        Err(_elapsed) => Err(format!(
+            "CDP handshake timed out after 10s on port {port}. Chrome may be hung."
+        )),
+    }
+}
+
 // ═══════════════════ TOOL HANDLERS ═══════════════════
 
-async fn browser_launch(args: &mut Value) -> Result<Value, String> {
+async fn browser_launch(args: &mut Value, session_id: Option<&str>) -> Result<Value, String> {
     let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("auto");
 
     // Try connecting to an already-running browser first.
@@ -106,42 +179,57 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
         let discovered = crate::discovery::refresh_browsers();
         for info in &discovered {
             if let Some(port) = info.debugging_port {
-                let url = format!("http://localhost:{port}");
-                if let Ok((browser, mut handler)) = Browser::connect(&url).await {
-                    // Get first page, or create one
-                    let page = match browser.pages().await {
-                        Ok(pages) => match pages.into_iter().next() {
-                            Some(p) => p,
-                            None => {
-                                // Need a page — create one, but we just connected
-                                // Can't create without handler's session
-                                return Err("Connected but no pages available".into());
+                // Use the same robust connect pattern as the headless path:
+                // custom reqwest client with timeouts + /json/version → WS URL,
+                // to avoid chromiumoxide's internal HTTP client hanging.
+                match connect_to_cdp_port(port).await {
+                    Ok((browser, mut handler)) => {
+                        // Get first page, or create one
+                        let page = match browser.pages().await {
+                            Ok(pages) => match pages.into_iter().next() {
+                                Some(p) => p,
+                                None => {
+                                    return Err("Connected but no pages available".into());
+                                }
+                            },
+                            Err(e) => return Err(format!("Failed to list pages: {e}")),
+                        };
+
+                        // Spawn handler to consume events
+                        tokio::spawn(async move { while handler.next().await.is_some() {} });
+
+                        let title = page.get_title().await.ok().flatten().unwrap_or_default();
+                        let url = page.url().await.ok().flatten().unwrap_or_default();
+
+                        // Clone page before moving it into the global BROWSER so we can
+                        // attach a copy to the session.
+                        let page_for_session = page.clone();
+
+                        let mut guard = BROWSER.write().await;
+                        *guard = Some(BrowserState {
+                            _browser: browser,
+                            current_page: page,
+                            is_headless: false,
+                            chrome_child: None,
+                        });
+
+                        if let Some(sid) = session_id {
+                            if let Some(session) = crate::session::SESSIONS.get_session(&sid.to_string()) {
+                                session.attach_page(page_for_session).await;
                             }
-                        },
-                        Err(e) => return Err(format!("Failed to list pages: {e}")),
-                    };
+                        }
 
-                    // Spawn handler to consume events
-                    tokio::spawn(async move { while handler.next().await.is_some() {} });
-
-                    let title = page.get_title().await.ok().flatten().unwrap_or_default();
-                    let url = page.url().await.ok().flatten().unwrap_or_default();
-
-                    let mut guard = BROWSER.write().await;
-                    *guard = Some(BrowserState {
-                        _browser: browser,
-                        current_page: page,
-                        is_headless: false,
-                        chrome_child: None,
-                    });
-
-                    return Ok(serde_json::json!({
-                        "connected": true,
-                        "mode": "desktop",
-                        "port": port,
-                        "title": title,
-                        "url": url,
-                    }));
+                        return Ok(serde_json::json!({
+                            "connected": true,
+                            "mode": "desktop",
+                            "port": port,
+                            "title": title,
+                            "url": url,
+                        }));
+                    }
+                    Err(e) => {
+                        tracing::debug!(port = port, error = %e, "desktop browser connect failed, trying next");
+                    }
                 }
             }
         }
@@ -201,7 +289,6 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
 
         // Find a free TCP port for Chrome's DevTools protocol
         let port = find_free_port()?;
-        let debug_url = format!("http://localhost:{port}");
         tracing::info!(port = port, chrome = %chrome_bin, "launching Chrome headless");
 
         eprintln!("[desk-mcp] Launching headless Chrome (this may take a few seconds)...");
@@ -240,7 +327,7 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
             .build()
             .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
-        let version_url = format!("{debug_url}/json/version");
+        let version_url = format!("http://localhost:{port}/json/version");
         let start = std::time::Instant::now();
         let deadline = start + Duration::from_secs(20);
         let mut connected = false;
@@ -284,52 +371,17 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
             "Chrome DevTools ready"
         );
 
-        // Fetch the WebSocket URL from /json/version using our own reqwest
-        // (chromiumoxide's internal reqwest 0.13 can hang on some systems).
-        let version_body = client
-            .get(&version_url)
-            .send()
-            .await
-            .map_err(|e| format!("Failed to fetch /json/version: {e}"))?
-            .text()
-            .await
-            .map_err(|e| format!("Failed to read /json/version body: {e}"))?;
-
-        let version_json: serde_json::Value = serde_json::from_str(&version_body)
-            .map_err(|e| format!("Failed to parse /json/version: {e}"))?;
-
-        let ws_url_raw = version_json["webSocketDebuggerUrl"]
-            .as_str()
-            .ok_or("No webSocketDebuggerUrl in /json/version response")?;
-
-        // Replace localhost with 127.0.0.1 — some async-tungstenite builds
-        // hang on localhost DNS resolution under tokio.
-        let ws_url = ws_url_raw.replace("localhost", "127.0.0.1");
-
-        tracing::info!(ws_url = %ws_url, "connecting to Chrome DevTools WebSocket");
-
-        // Connect via chromiumoxide — pass the WebSocket URL directly so
-        // chromiumoxide's internal HTTP client (reqwest 0.13) is never used.
-        let connect_result =
-            tokio::time::timeout(Duration::from_secs(10), Browser::connect(ws_url)).await;
-
-        let (browser, mut handler) = match connect_result {
-            Ok(Ok(pair)) => pair,
-            Ok(Err(e)) => {
+        // Connect to the CDP endpoint via our robust helper — same pattern
+        // used for desktop mode. Uses custom reqwest with timeouts and
+        // wraps the WebSocket handshake in a 10s deadline.
+        let (browser, mut handler) = match connect_to_cdp_port(port).await {
+            Ok(pair) => pair,
+            Err(e) => {
                 let _ = chrome_child.kill();
                 let _ = chrome_child.wait();
                 return Err(format!(
                     "Chrome DevTools is listening on port {port} but CDP handshake failed: {e}. \
                      Try: chrome --headless=new --no-sandbox --remote-debugging-port={port} about:blank"
-                ));
-            }
-            Err(_elapsed) => {
-                let _ = chrome_child.kill();
-                let _ = chrome_child.wait();
-                return Err(format!(
-                    "CDP handshake timed out after 10s on port {port}. \
-                     Chrome is running but not accepting WebSocket connections. \
-                     Check if a firewall is blocking localhost:{port}."
                 ));
             }
         };
@@ -345,6 +397,10 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
         // Spawn handler to consume events
         tokio::spawn(async move { while handler.next().await.is_some() {} });
 
+        // Clone page before moving it into the global BROWSER so we can
+        // attach a copy to the session.
+        let page_for_session = page.clone();
+
         let mut guard = BROWSER.write().await;
         *guard = Some(BrowserState {
             _browser: browser,
@@ -352,6 +408,12 @@ async fn browser_launch(args: &mut Value) -> Result<Value, String> {
             is_headless: true,
             chrome_child: Some(chrome_child),
         });
+
+        if let Some(sid) = session_id {
+            if let Some(session) = crate::session::SESSIONS.get_session(&sid.to_string()) {
+                session.attach_page(page_for_session).await;
+            }
+        }
 
         return Ok(serde_json::json!({
             "connected": true,

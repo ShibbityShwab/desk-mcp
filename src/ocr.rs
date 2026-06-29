@@ -6,18 +6,18 @@
 use anyhow::{Context, Result};
 use image::{DynamicImage, ImageFormat};
 use leptess::{LepTess, Variable};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::vision::ClickableRegion;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrItem {
     pub text: String,
     pub bounds: Option<OcrBounds>,
     pub confidence: f32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OcrBounds {
     pub x: i32,
     pub y: i32,

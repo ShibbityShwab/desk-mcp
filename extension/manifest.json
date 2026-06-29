@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "desk-mcp Bridge",
+  "version": "1.0",
+  "description": "Bridge between desk-mcp and Chrome — provides screenshot, input, and accessibility via CDP.",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "windows",
+    "clipboardRead",
+    "clipboardWrite",
+    "debugger",
+    "sockets",
+    "sockets.tcpServer"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "host_permissions": [
+    "<all_urls>"
+  ]
+}

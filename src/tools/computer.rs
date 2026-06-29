@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::time::Duration;
 
 /// Capture a post-action screenshot + OCR + clickable detection.
-async fn post_action_screen() -> Result<serde_json::Value, String> {
+async fn post_action_screen() -> Result<crate::vision::ScreenState, String> {
     let png = PROVIDER
         .screenshot(None)
         .map_err(|e| format!("screenshot failed: {e}"))?;
@@ -18,15 +18,19 @@ async fn post_action_screen() -> Result<serde_json::Value, String> {
             "geometry": {"x": w.geometry.x, "y": w.geometry.y, "width": w.geometry.width, "height": w.geometry.height}
         })
     });
-    crate::vision::screen_state(&png, active_window).map(|state| serde_json::json!(state))
+    crate::vision::screen_state(&png, active_window)
 }
 
 /// Merge post-action screen state into a tool result (silently on error).
 async fn with_screen(v: serde_json::Value) -> Result<serde_json::Value, (String, String)> {
     let mut obj = v.as_object().cloned().unwrap_or_default();
     match post_action_screen().await {
-        Ok(screen) => {
-            obj.insert("screen".into(), screen);
+        Ok(state) => {
+            let affordances = crate::vision::build_affordances(&state.clickable_regions, 10);
+            let summary = crate::vision::summarize_screen(&state);
+            obj.insert("affordances".into(), serde_json::to_value(&affordances).unwrap_or_default());
+            obj.insert("screen_summary".into(), serde_json::Value::String(summary));
+            obj.insert("screen".into(), serde_json::to_value(&state).unwrap_or_default());
         }
         Err(e) => {
             obj.insert("screen_error".into(), serde_json::Value::String(e));

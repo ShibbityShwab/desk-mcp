@@ -1,4 +1,4 @@
-//! Tool registry — defines all 55 MCP tools with JSON schemas.
+//! Tool registry — defines all 63 MCP tools with JSON schemas.
 //!
 //! Each tool is registered with a name, description, and JSON Schema input spec.
 //! The `dispatch` function routes tool calls to the appropriate handler.
@@ -11,6 +11,10 @@ pub mod search;
 
 use crate::response::ToolResponse;
 use serde::Serialize;
+use std::sync::atomic::AtomicBool;
+
+/// Recipe recursion guard — prevents recipe→recipe nesting.
+static RECIPE_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// MCP tool definition
 #[derive(Debug, Clone, Serialize)]
@@ -21,7 +25,7 @@ pub struct ToolDef {
     pub input_schema: serde_json::Value,
 }
 
-/// Generate the full tool list (42 tools)
+/// Generate the full tool list (63 tools)
 pub fn all_tools() -> Vec<ToolDef> {
     let mut tools = Vec::new();
 
@@ -389,16 +393,59 @@ pub fn all_tools() -> Vec<ToolDef> {
         r#"{"type":"object","properties":{}}"#,
     );
 
+    // ═══════════════ RECIPES (dynamic, loaded from disk) ═══════════════
+    for recipe in crate::recipes::load_all_recipes() {
+        let schema = crate::recipes::recipe_input_schema(&recipe);
+        tools.push(ToolDef {
+            name: recipe.name,
+            description: recipe.description,
+            input_schema: schema,
+        });
+    }
+
     tools
 }
 
 /// Dispatch a tool call by name
-pub async fn dispatch(name: &str, args: serde_json::Value) -> ToolResponse {
+pub async fn dispatch(name: &str, args: serde_json::Value, session_id: Option<&str>) -> ToolResponse {
     tracing::debug!(tool = name, "dispatching tool");
     let start = std::time::Instant::now();
 
+    // ── Policy check ──
+    match crate::policy::evaluate(name, &args) {
+        crate::policy::PolicyDecision::Deny { reason } => {
+            let resp = crate::response::err("POLICY_DENIED", &reason);
+            crate::audit::log(name, &args, false, Some("policy_denied"), start);
+            return resp;
+        }
+        crate::policy::PolicyDecision::RequireConfirmation { message, params } => {
+            if !crate::safety::is_approved_for_session(name, &params) {
+                let id = crate::safety::request(name, &message, &params);
+                return crate::response::err(
+                    "CONFIRMATION_REQUIRED",
+                    &format!(
+                        "Tool '{}' requires confirmation. Use approve('{}') to proceed. {}",
+                        name, id, message
+                    ),
+                );
+            }
+        }
+        crate::policy::PolicyDecision::Allow => {} // proceed
+    }
+
     // ── Rate limiting ──
-    if !crate::safety::check_rate(name) {
+    // Prefer per-session rate bucket when available; fall back to global.
+    // (record_action is handled by transport::handle_request after dispatch.)
+    let rate_limited = if let Some(sid) = session_id {
+        match crate::session::SESSIONS.get_session(&sid.to_string()) {
+            Some(session) => !session.check_rate(),
+            None => !crate::safety::check_rate(name),
+        }
+    } else {
+        !crate::safety::check_rate(name)
+    };
+
+    if rate_limited {
         let resp = crate::response::err(
             "RATE_LIMITED",
             &format!("Rate limit reached for '{name}'. Wait a moment before retrying."),
@@ -410,11 +457,79 @@ pub async fn dispatch(name: &str, args: serde_json::Value) -> ToolResponse {
     // Clone args for audit — each handler consumes its own args
     let audit_args = args.clone();
 
+    // ── Recipe dispatch (checked before main dispatch to avoid async recursion) ──
+    if let Some(recipe) = crate::recipes::find_recipe(name) {
+        // Guard against recipe→recipe recursion (recipes cannot call other recipes in v1)
+        if RECIPE_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            RECIPE_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+            let resp = crate::response::err(
+                "RECIPE_RECURSION",
+                "Recipes cannot call other recipes (nesting limit: 1). Use individual tool calls instead.",
+            );
+            crate::audit::log(name, &args, false, Some("recipe_recursion"), start);
+            return resp;
+        }
+
+        let mut params: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        if let Some(obj) = args.as_object() {
+            for (k, v) in obj {
+                match v {
+                    serde_json::Value::String(s) => { params.insert(k.clone(), s.clone()); }
+                    other => { params.insert(k.clone(), other.to_string()); }
+                }
+            }
+        }
+        let mut last_result: Option<crate::response::ToolResponse> = None;
+        for step in &recipe.steps {
+            // Skip recipe→recipe steps (they would recurse)
+            if crate::recipes::find_recipe(&step.tool).is_some() {
+                continue;
+            }
+            let step_params = crate::recipes::substitute_params(&step.params, &params);
+            let resp = Box::pin(crate::tools::dispatch(&step.tool, step_params, session_id)).await;
+            if !resp.ok {
+                RECIPE_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+                crate::audit::log(name, &args, false, Some("recipe_step_failed"), start);
+                return resp;
+            }
+            last_result = Some(resp);
+        }
+        RECIPE_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+        let final_resp = last_result.unwrap_or_else(|| {
+            crate::response::ok(serde_json::json!({
+                "recipe": name, "steps_completed": recipe.steps.len(),
+            }))
+        });
+        crate::audit::log(name, &args, final_resp.ok, None, start);
+        return final_resp;
+    }
+
     // ── Run tool handler with a hard 60s deadline ──
     // Some tool handlers (browser_launch in particular) can hang indefinitely
     // if the CDP WebSocket handshake stalls. This timeout ensures the server
     // always responds — even if the handler future never yields.
     let dispatch_future = async {
+        // ── Resolution-routed tools (three-tier resolver) ──
+        // These tools first try resolution via the target field when present,
+        // falling back to the direct handler when only raw coordinates are provided.
+        let resolution_routed = matches!(
+            name,
+            "mouse_click"
+                | "mouse_double_click"
+                | "keyboard_type"
+                | "click_on_text"
+                | "browser_click"
+                | "browser_type"
+        );
+        if resolution_routed {
+            if let Ok(resp) = crate::resolution::dispatch_resolve(name, &args).await {
+                return resp;
+            }
+            // If resolution fails (e.g. no target fields), fall through to
+            // the existing direct handler below.
+        }
+
         match name {
             // Computer use
             "screenshot" | "get_screen_size" | "mouse_move" | "mouse_click" | "mouse_double_click"
@@ -429,7 +544,7 @@ pub async fn dispatch(name: &str, args: serde_json::Value) -> ToolResponse {
         | "browser_screenshot" | "browser_exec_js" | "browser_get_html" | "browser_get_text"
         | "browser_wait_for" | "browser_tabs" | "browser_new_tab" | "browser_close_tab"
         | "browser_switch_tab" | "browser_download" | "browser_upload" | "browser_cookies"
-        | "browser_console" => browser::handle(name, args).await,
+        | "browser_console" => browser::handle(name, args, session_id).await,
         "browser_refresh" => {
             let fresh_browsers = crate::discovery::refresh_browsers();
             crate::discovery::refresh_discovery();

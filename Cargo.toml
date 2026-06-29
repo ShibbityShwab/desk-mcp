@@ -34,10 +34,19 @@ axum = "0.7"
 tower-http = { version = "0.5", features = ["cors"] }
 leptess = "0.14"
 dirs-next = "2.0.0"
+serde_yaml = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
+libloading = "0.8"
+dashmap = "6"
 urlencoding = "2"
 reqwest = { version = "0.12", default-features = true, features = ["blocking"] }
+
+# OpenTelemetry OTLP exporter (enabled via DESKMCP_OTLP=1)
+tracing-opentelemetry = "0.28"
+opentelemetry = "0.27"
+opentelemetry-otlp = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
 arboard = "3"
 notify-rust = "4"
 enigo = { version = "0.3", default-features = false, features = ["x11rb"] }

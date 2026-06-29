@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Instant;
 
 // ---------------------------------------------------------------------------
@@ -59,12 +59,20 @@ pub fn request(tool: &str, message: &str, params: &serde_json::Value) -> String 
 
 /// Approve a pending confirmation. Returns `Ok(())` if approved,
 /// `Err(...)` if the id was not found.
+///
+/// Also increments the per-tool manual approval counter so that
+/// `auto_approve_after` can take effect.
 pub fn approve(id: &str) -> Result<(), String> {
     let mut v = pending().lock().map_err(|e| e.to_string())?;
     let pos = v.iter().position(|c| c.id == id);
     match pos {
         Some(i) => {
+            let tool = v[i].tool.clone();
             v.remove(i);
+            // Increment manual approval counter for this tool
+            if let Ok(mut map) = MANUAL_APPROVALS.lock() {
+                *map.entry(tool).or_insert(0) += 1;
+            }
             Ok(())
         }
         None => Err(format!("no pending confirmation with id {id}")),
@@ -106,6 +114,25 @@ pub fn is_gated(tool: &str) -> bool {
             | "keyboard_type"
             | "open_app"
     )
+}
+
+// ---------------------------------------------------------------------------
+// Auto-approval tracking (per-tool manual approval counters)
+// ---------------------------------------------------------------------------
+
+static MANUAL_APPROVALS: LazyLock<Mutex<HashMap<String, u32>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Returns `true` if the tool has been manually approved enough times
+/// to qualify for auto-approval (per the `auto_approve_after` policy).
+pub fn is_approved_for_session(tool: &str, _params: &serde_json::Value) -> bool {
+    let threshold = match crate::policy::auto_approve_threshold(tool) {
+        Some(n) => n,
+        None => return false,
+    };
+    let map = MANUAL_APPROVALS.lock().unwrap_or_else(|e| e.into_inner());
+    let count = map.get(tool).copied().unwrap_or(0);
+    count >= threshold
 }
 
 // ---------------------------------------------------------------------------

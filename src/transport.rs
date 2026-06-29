@@ -2,11 +2,17 @@
 //!
 //! Both the stdio transport (main.rs) and the HTTP transport use the same
 //! `handle_request` function defined here.
+//!
+//! ## Sessions
+//! Each connection gets an isolated session via `SESSIONS`. HTTP requests
+//! map the Bearer token → deterministic session id; stdio uses a single
+//! `"stdio-session"` id.
 
 use axum::{routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::net::SocketAddr;
+use crate::session::{self, SessionCapabilities};
 
 // ── JSON-RPC 2.0 types ────────────────────────────────────────────────
 
@@ -42,12 +48,28 @@ pub struct JsonRpcError {
     pub data: Option<Value>,
 }
 
+// ── Session registry ─────────────────────────────────────────────────
+
+/// Global session manager — one per process (defined in session module, re-exported here for convenience).
+pub use crate::session::SESSIONS;
+
 // ── Shared request handler ────────────────────────────────────────────
 
 /// Dispatch a JSON-RPC request and return the response (if any).
 ///
+/// `session_id` identifies the caller's session. For HTTP this is
+/// derived from the Bearer token; for stdio it is `"stdio-session"`.
+///
 /// Returns `None` for *notifications* (requests without an `id`).
-pub async fn handle_request(req: JsonRpcRequest) -> Option<JsonRpcResponse> {
+pub async fn handle_request(
+    req: JsonRpcRequest,
+    session_id: Option<&str>,
+) -> Option<JsonRpcResponse> {
+    // ── Resolve (or create) session ──────────────────────────────────
+    let session = session_id.and_then(|sid| SESSIONS.get_session(&sid.to_string()));
+
+    // Rate limiting is now handled by dispatch() — see tools/mod.rs for
+    // per-session and global rate check logic.
     let id = req.id;
 
     let result = match req.method.as_str() {
@@ -81,7 +103,7 @@ pub async fn handle_request(req: JsonRpcRequest) -> Option<JsonRpcResponse> {
 
             tracing::info!(tool = %tool_name, "tools/call");
 
-            let tool_response = crate::tools::dispatch(tool_name, arguments).await;
+            let tool_response = crate::tools::dispatch(tool_name, arguments, session_id).await;
             let result_value = serde_json::to_value(&tool_response).unwrap_or_default();
 
             Some(serde_json::json!({
@@ -117,6 +139,12 @@ pub async fn handle_request(req: JsonRpcRequest) -> Option<JsonRpcResponse> {
             }
         }
     };
+
+    // ── Record action in session (after dispatch, before response) ────
+    if let Some(ref s) = session {
+        s.record_action();
+        crate::session::SESSIONS.increment_total_actions();
+    }
 
     // Only respond if there's an id (not a notification)
     match (id, result) {
@@ -156,7 +184,17 @@ async fn mcp_handler(
             .unwrap();
     }
 
-    match handle_request(request).await {
+    // ── Session lookup / creation ──────────────────────────────────────
+    // Each unique auth token maps to its own deterministic session.
+    let token = provided.unwrap_or("anonymous");
+    let session_id = session::hash_to_session_id(token.as_bytes());
+
+    // Create session if it doesn't exist yet.
+    if SESSIONS.get_session(&session_id).is_none() {
+        SESSIONS.create_deterministic(&session_id, SessionCapabilities::default());
+    }
+
+    match handle_request(request, Some(&session_id)).await {
         Some(response) => {
             let body = serde_json::to_vec(&response).unwrap_or_default();
             axum::response::Response::builder()
@@ -189,6 +227,8 @@ pub async fn run_http_server(addr: SocketAddr) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", axum::routing::get(health_handler))
         .route("/mcp", post(mcp_handler))
+        .route("/dashboard", axum::routing::get(crate::dashboard::dashboard_handler))
+        .route("/dashboard/stats", axum::routing::get(crate::dashboard::stats_handler))
         .layer(CorsLayer::permissive());
 
     tracing::info!(

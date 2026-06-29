@@ -1,0 +1,17 @@
+{
+  "name": "fill_github_issue",
+  "description": "Navigate to GitHub and create a new issue",
+  "version": "1.0.0",
+  "parameters": {
+    "repo": {"type": "string", "required": true},
+    "title": {"type": "string", "required": true},
+    "body": {"type": "string", "required": true}
+  },
+  "steps": [
+    {"tool": "browser_navigate", "params": {"url": "https://github.com/{repo}/issues/new"}},
+    {"tool": "browser_wait_for", "params": {"selector": "#issue_title"}},
+    {"tool": "browser_type", "params": {"selector": "#issue_title", "text": "{title}"}},
+    {"tool": "browser_type", "params": {"selector": "#issue_body", "text": "{body}"}},
+    {"tool": "browser_click", "params": {"text": "Submit new issue"}}
+  ]
+}

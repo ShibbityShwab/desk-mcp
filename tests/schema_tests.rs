@@ -13,7 +13,9 @@ const ALL_TOOLS: &[&str] = &[
     "mouse_drag",
     "keyboard_type",
     "key_press",
+    "press_hotkey",
     "shell_run",
+    "env_get",
     "clipboard_get",
     "clipboard_set",
     "list_windows",
@@ -22,6 +24,7 @@ const ALL_TOOLS: &[&str] = &[
     "open_app",
     "notify",
     "get_window_state",
+    "type_to_window",
     "click_on_text",
     "wait_for_text",
     "extract_text",
@@ -64,6 +67,7 @@ const ALL_TOOLS: &[&str] = &[
     "server_status",
     // Web search
     "web_search",
+    "web_fetch",
     // Safety & confirmation
     "request_confirmation",
     "approve",

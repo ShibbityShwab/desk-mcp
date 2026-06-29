@@ -1,8 +1,12 @@
 //! Computer use provider trait and factory.
 
+pub mod browser_extension;
 pub mod headless;
 pub mod kde_wayland;
 pub mod kwin_dbus;
+pub mod macos;
+pub mod mock;
+pub mod windows;
 
 use anyhow::Result;
 
@@ -131,10 +135,17 @@ pub struct WindowState {
 /// Select the best provider for the current environment.
 ///
 /// Provider selection order:
+/// 0. `BrowserExtensionProvider` — when `--browser-extension` or `DESKMCP_BROWSER_EXT` is set
 /// 1. `KWinDbusProvider` — wraps the KDE provider with native D-Bus window ops
 /// 2. `KdeWaylandProvider` — fallback to kdotool subprocess
 /// 3. `HeadlessProvider` — last resort (no display available)
 pub fn get_provider() -> Box<dyn ComputerProvider + Send + Sync> {
+    // ── Browser extension mode (opt-in via CLI or env) ──────────────────
+    if let Some(ws_url) = browser_extension::BrowserExtensionProvider::resolve_ws_url() {
+        tracing::info!(%ws_url, "using browser extension provider");
+        return Box::new(browser_extension::BrowserExtensionProvider::new(&ws_url));
+    }
+
     let caps = crate::discovery::detect();
     match caps.provider.as_str() {
         "wayland_kde" => {

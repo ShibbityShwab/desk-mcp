@@ -10,13 +10,13 @@
 
 use crate::ocr::{self, OcrItem};
 use image::GenericImageView;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // Clickable region
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClickableRegion {
     pub x: i32,
     pub y: i32,
@@ -28,7 +28,7 @@ pub struct ClickableRegion {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ElementType {
     Button,
@@ -45,7 +45,7 @@ pub enum ElementType {
 // Screen state — the core struct returned after every action
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScreenState {
     pub width: u32,
     pub height: u32,
@@ -56,6 +56,92 @@ pub struct ScreenState {
     pub clickable_regions: Vec<ClickableRegion>,
     /// Human-readable summary of what's on screen.
     pub description: String,
+}
+
+// ---------------------------------------------------------------------------
+// Affordances — what the agent can do next
+// ---------------------------------------------------------------------------
+
+/// A suggested next action derived from a detected clickable region.
+#[derive(Debug, Clone, Serialize)]
+pub struct Affordance {
+    /// Action name, e.g. "click", "type_into".
+    pub action: String,
+    /// Human-readable target, e.g. "Save button", "Search input".
+    pub target: String,
+    /// Suggested parameters for the action (x, y, text, etc.).
+    pub params: serde_json::Value,
+}
+
+/// Build affordances from detected clickable regions on screen.
+///
+/// Skips `Unknown` regions and caps output at `max` items.
+pub fn build_affordances(regions: &[ClickableRegion], max: usize) -> Vec<Affordance> {
+    regions
+        .iter()
+        .take(max)
+        .filter_map(|r| {
+            let action = match r.element_type {
+                ElementType::Button
+                | ElementType::MenuItem
+                | ElementType::Icon
+                | ElementType::Link => "click",
+                ElementType::Input => "type_into",
+                ElementType::Checkbox => "click",
+                ElementType::Select => "click",
+                ElementType::Unknown => return None,
+            };
+            let target = if r.text.is_empty() {
+                format!("{:?} at ({}, {})", r.element_type, r.x, r.y)
+            } else {
+                r.text.clone()
+            };
+            Some(Affordance {
+                action: action.into(),
+                target,
+                params: serde_json::json!({
+                    "x": r.x + (r.width as i32) / 2,
+                    "y": r.y + (r.height as i32) / 2,
+                    "text": r.text,
+                }),
+            })
+        })
+        .collect()
+}
+
+/// Produce a one-sentence human-readable summary of the screen state.
+pub fn summarize_screen(state: &ScreenState) -> String {
+    let window = state
+        .active_window
+        .as_ref()
+        .and_then(|w| w.get("title").and_then(|t| t.as_str()))
+        .unwrap_or("Desktop");
+    let text_count = state.text_elements.len();
+    let clickable_count = state.clickable_regions.len();
+
+    if clickable_count > 0 {
+        let names: Vec<&str> = state
+            .clickable_regions
+            .iter()
+            .filter(|r| !r.text.is_empty())
+            .take(3)
+            .map(|r| r.text.as_str())
+            .collect();
+        if names.is_empty() {
+            format!(
+                "{window}: {text_count} text elements, {clickable_count} clickable regions detected"
+            )
+        } else {
+            format!(
+                "{window}: {text_count} text elements, {clickable_count} clickable regions including: {}",
+                names.join(", ")
+            )
+        }
+    } else if text_count > 0 {
+        format!("{window}: {text_count} text elements detected, no clickable regions")
+    } else {
+        format!("{window}: no text or clickable elements detected")
+    }
 }
 
 // ---------------------------------------------------------------------------
