@@ -205,7 +205,7 @@ impl KWinDbusProvider {
                 "/KWin",
                 Some("org.kde.KWin"),
                 "queryWindowInfo",
-                &(),
+                &(uuid,),
             )
             .context("dbus queryWindowInfo")?;
         let body: zbus::zvariant::OwnedValue = msg

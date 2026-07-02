@@ -28,9 +28,15 @@ async fn with_screen(v: serde_json::Value) -> Result<serde_json::Value, (String,
         Ok(state) => {
             let affordances = crate::vision::build_affordances(&state.clickable_regions, 10);
             let summary = crate::vision::summarize_screen(&state);
-            obj.insert("affordances".into(), serde_json::to_value(&affordances).unwrap_or_default());
+            obj.insert(
+                "affordances".into(),
+                serde_json::to_value(&affordances).unwrap_or_default(),
+            );
             obj.insert("screen_summary".into(), serde_json::Value::String(summary));
-            obj.insert("screen".into(), serde_json::to_value(&state).unwrap_or_default());
+            obj.insert(
+                "screen".into(),
+                serde_json::to_value(&state).unwrap_or_default(),
+            );
         }
         Err(e) => {
             obj.insert("screen_error".into(), serde_json::Value::String(e));

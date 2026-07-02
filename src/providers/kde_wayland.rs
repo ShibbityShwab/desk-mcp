@@ -205,11 +205,11 @@ fn load_and_crop_screenshot(path: &str, region: Option<(i32, i32, u32, u32)>) ->
 #[derive(Default)]
 pub struct KdeWaylandProvider;
 
-static CLIPBOARD: OnceLock<Mutex<arboard::Clipboard>> = OnceLock::new();
+static CLIPBOARD: OnceLock<Mutex<Option<arboard::Clipboard>>> = OnceLock::new();
 
-fn get_clipboard_lock() -> &'static Mutex<arboard::Clipboard> {
+fn get_clipboard_lock() -> &'static Mutex<Option<arboard::Clipboard>> {
     CLIPBOARD.get_or_init(|| {
-        Mutex::new(arboard::Clipboard::new().expect("arboard: failed to init clipboard"))
+        Mutex::new(arboard::Clipboard::new().ok())
     })
 }
 
@@ -676,14 +676,15 @@ impl ComputerProvider for KdeWaylandProvider {
 
     // ── Clipboard (arboard with wl-copy/wl-paste fallback) ─────
     fn clipboard_get(&self) -> Result<String> {
-        // Try arboard first
-        if let Ok(text) = get_clipboard_lock()
+        // Try arboard first (fails gracefully on Wayland)
+        let mut lock = get_clipboard_lock()
             .lock()
-            .map_err(|e| anyhow::anyhow!("clipboard lock poisoned: {}", e))?
-            .get_text()
-        {
-            if !text.is_empty() {
-                return Ok(text);
+            .map_err(|e| anyhow::anyhow!("clipboard lock poisoned: {}", e))?;
+        if let Some(ref mut clipboard) = *lock {
+            if let Ok(text) = clipboard.get_text() {
+                if !text.is_empty() {
+                    return Ok(text);
+                }
             }
         }
 
@@ -714,11 +715,12 @@ impl ComputerProvider for KdeWaylandProvider {
     }
 
     fn clipboard_set(&self, text: &str) -> Result<()> {
-        // Always try arboard first
-        let _ = get_clipboard_lock()
-            .lock()
-            .map_err(|e| anyhow::anyhow!("clipboard lock poisoned: {}", e))?
-            .set_text(text);
+        // Try arboard first (if available)
+        if let Ok(mut lock) = get_clipboard_lock().lock() {
+            if let Some(ref mut clipboard) = *lock {
+                let _ = clipboard.set_text(text);
+            }
+        }
 
         // wl-copy (Wayland) — spawn detached, don't wait
         let _ = std::process::Command::new("sh")
@@ -1245,19 +1247,21 @@ impl ComputerProvider for KdeWaylandProvider {
         })
     }
 
-    // ── Notify (notify-rust, cross-platform) ─────────────────
+    // ── Notify (uses notify-send CLI — reliable, never crashes) ──
     fn notify(&self, title: &str, message: &str, urgency: &str) -> Result<()> {
-        let urgency_level = match urgency {
-            "critical" => notify_rust::Urgency::Critical,
-            "low" => notify_rust::Urgency::Low,
-            _ => notify_rust::Urgency::Normal,
+        let uval = match urgency {
+            "critical" => "critical",
+            "low" => "low",
+            _ => "normal",
         };
-        notify_rust::Notification::new()
-            .summary(title)
-            .body(message)
-            .urgency(urgency_level)
-            .show()
-            .context("notify-rust: failed to show notification")?;
+        let _ = std::process::Command::new("notify-send")
+            .arg("-u")
+            .arg(uval)
+            .arg(title)
+            .arg(message)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
         Ok(())
     }
 

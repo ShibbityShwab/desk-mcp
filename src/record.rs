@@ -31,10 +31,7 @@ use super::providers::ComputerProvider;
 pub enum TraceEntry {
     /// A method was called with these arguments.
     #[serde(rename = "call")]
-    Call {
-        method: String,
-        args: Value,
-    },
+    Call { method: String, args: Value },
     /// A method returned (success or error).
     #[serde(rename = "return")]
     Return {
@@ -97,14 +94,10 @@ impl<P: ComputerProvider> TraceRecorder<P> {
 macro_rules! record_method {
     ($self:ident, $method:literal, $args:expr, $call:expr) => {{
         let start = Instant::now();
-        $self
-            .trace
-            .lock()
-            .unwrap()
-            .push(TraceEntry::Call {
-                method: $method.into(),
-                args: $args,
-            });
+        $self.trace.lock().unwrap().push(TraceEntry::Call {
+            method: $method.into(),
+            args: $args,
+        });
         match $call {
             Ok(val) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
@@ -118,16 +111,12 @@ macro_rules! record_method {
             }
             Err(e) => {
                 let duration_ms = start.elapsed().as_millis() as u64;
-                $self
-                    .trace
-                    .lock()
-                    .unwrap()
-                    .push(TraceEntry::Return {
-                        method: $method.into(),
-                        duration_ms,
-                        result: None,
-                        error: Some(e.to_string()),
-                    });
+                $self.trace.lock().unwrap().push(TraceEntry::Return {
+                    method: $method.into(),
+                    duration_ms,
+                    result: None,
+                    error: Some(e.to_string()),
+                });
                 Err(e)
             }
         }
@@ -217,13 +206,7 @@ impl<P: ComputerProvider> ComputerProvider for TraceRecorder<P> {
         )
     }
 
-    fn mouse_click(
-        &self,
-        button: &str,
-        x: Option<i32>,
-        y: Option<i32>,
-        clicks: u32,
-    ) -> Result<()> {
+    fn mouse_click(&self, button: &str, x: Option<i32>, y: Option<i32>, clicks: u32) -> Result<()> {
         record_method!(
             self,
             "mouse_click",
@@ -519,11 +502,11 @@ impl<P: ComputerProvider> ComputerProvider for TraceRecorder<P> {
 ///
 /// Each entry is serialized as a single JSON line.
 pub fn save_trace(trace: &[TraceEntry], path: &str) -> Result<()> {
-    let mut file = File::create(path)
-        .with_context(|| format!("failed to create trace file: {path}"))?;
+    let mut file =
+        File::create(path).with_context(|| format!("failed to create trace file: {path}"))?;
     for entry in trace {
-        let line = serde_json::to_string(entry)
-            .with_context(|| "failed to serialize trace entry")?;
+        let line =
+            serde_json::to_string(entry).with_context(|| "failed to serialize trace entry")?;
         writeln!(file, "{line}").with_context(|| format!("failed to write trace file: {path}"))?;
     }
     Ok(())
@@ -533,25 +516,19 @@ pub fn save_trace(trace: &[TraceEntry], path: &str) -> Result<()> {
 ///
 /// Blank lines are skipped.  Lines that fail to parse cause an error.
 pub fn load_trace(path: &str) -> Result<Vec<TraceEntry>> {
-    let file = File::open(path)
-        .with_context(|| format!("failed to open trace file: {path}"))?;
+    let file = File::open(path).with_context(|| format!("failed to open trace file: {path}"))?;
     let reader = BufReader::new(file);
     let mut entries = Vec::new();
 
     for (lineno, line_result) in reader.lines().enumerate() {
-        let line = line_result
-            .with_context(|| format!("failed to read line {} in {path}", lineno + 1))?;
+        let line =
+            line_result.with_context(|| format!("failed to read line {} in {path}", lineno + 1))?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        let entry: TraceEntry = serde_json::from_str(trimmed).with_context(|| {
-            format!(
-                "failed to parse trace entry at {}:{}",
-                path,
-                lineno + 1
-            )
-        })?;
+        let entry: TraceEntry = serde_json::from_str(trimmed)
+            .with_context(|| format!("failed to parse trace entry at {}:{}", path, lineno + 1))?;
         entries.push(entry);
     }
 
@@ -586,9 +563,7 @@ pub fn replay_trace(mock: &MockProvider, trace_path: &str) -> Result<()> {
             match &trace[i] {
                 TraceEntry::Return { .. } => &trace[i],
                 TraceEntry::Call { .. } => {
-                    anyhow::bail!(
-                        "unexpected call entry at position {i} (expected return)"
-                    );
+                    anyhow::bail!("unexpected call entry at position {i} (expected return)");
                 }
             }
         } else {
@@ -600,7 +575,13 @@ pub fn replay_trace(mock: &MockProvider, trace_path: &str) -> Result<()> {
             dispatch_call(mock, method, args)?;
         }
 
-        if let TraceEntry::Return { method, error, result, .. } = return_entry {
+        if let TraceEntry::Return {
+            method,
+            error,
+            result,
+            ..
+        } = return_entry
+        {
             if let Some(expected_error) = error {
                 // We cannot easily assert that the mock returned an error
                 // because the mock never errors in normal operations.
@@ -622,17 +603,15 @@ pub fn replay_trace(mock: &MockProvider, trace_path: &str) -> Result<()> {
 fn dispatch_call(mock: &MockProvider, method: &str, args: &Value) -> Result<()> {
     match method {
         "screenshot" => {
-            let region = args
-                .get("region")
-                .and_then(|v| {
-                    let arr = v.as_array()?;
-                    Some((
-                        arr.first()?.as_i64()? as i32,
-                        arr.get(1)?.as_i64()? as i32,
-                        arr.get(2)?.as_u64()? as u32,
-                        arr.get(3)?.as_u64()? as u32,
-                    ))
-                });
+            let region = args.get("region").and_then(|v| {
+                let arr = v.as_array()?;
+                Some((
+                    arr.first()?.as_i64()? as i32,
+                    arr.get(1)?.as_i64()? as i32,
+                    arr.get(2)?.as_u64()? as u32,
+                    arr.get(3)?.as_u64()? as u32,
+                ))
+            });
             mock.screenshot(region)?;
         }
         "get_screen_size" => {
@@ -771,10 +750,7 @@ fn verify_result(mock: &MockProvider, method: &str, expected: &Value) -> Result<
             // We can't re-dispatch shell_run because mock returns canned
             // responses.  Just verify the action was logged.
             let last = mock.last_action();
-            anyhow::ensure!(
-                last.is_some(),
-                "shell_run did not record an action"
-            );
+            anyhow::ensure!(last.is_some(), "shell_run did not record an action");
             let action = last.unwrap();
             anyhow::ensure!(
                 action.params["command"].as_str().is_some(),
@@ -808,17 +784,11 @@ fn verify_result(mock: &MockProvider, method: &str, expected: &Value) -> Result<
         "get_active_window" => {
             // Side effect is recorded in action log.
             let last = mock.last_action();
-            anyhow::ensure!(
-                last.is_some(),
-                "get_active_window did not record an action"
-            );
+            anyhow::ensure!(last.is_some(), "get_active_window did not record an action");
         }
         "open_app" | "notify" => {
             let last = mock.last_action();
-            anyhow::ensure!(
-                last.is_some(),
-                "{method} did not record an action"
-            );
+            anyhow::ensure!(last.is_some(), "{method} did not record an action");
         }
         "get_window_state" => {
             let exp_count = expected["element_count"].as_u64().unwrap_or(0) as usize;
@@ -913,7 +883,9 @@ mod tests {
     fn recorder_captures_mouse_click() {
         let mock = MockProvider::new();
         let recorder = TraceRecorder::new(mock);
-        recorder.mouse_click("right", Some(10), Some(20), 2).unwrap();
+        recorder
+            .mouse_click("right", Some(10), Some(20), 2)
+            .unwrap();
 
         let trace = recorder.trace();
         assert_eq!(trace.len(), 2);

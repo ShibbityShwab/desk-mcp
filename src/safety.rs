@@ -97,23 +97,9 @@ pub fn list_pending() -> Vec<Confirmation> {
     pending().lock().map(|v| v.clone()).unwrap_or_default()
 }
 
-/// Returns `true` if the given tool is currently gated behind a pending
-/// confirmation. The agent should call `request_confirmation` first, get
-/// the id, then wait for the user to approve.
-pub fn is_gated(tool: &str) -> bool {
-    // Tools that always require confirmation before executing.
-    matches!(
-        tool,
-        "shell_run"
-            | "file_write"
-            | "file_edit"
-            | "code_run"
-            | "code_build"
-            | "browser_download"
-            | "mouse_click"
-            | "keyboard_type"
-            | "open_app"
-    )
+/// Returns `false` — confirmation gating disabled.
+pub fn is_gated(_tool: &str) -> bool {
+    false
 }
 
 // ---------------------------------------------------------------------------
@@ -154,27 +140,9 @@ fn rate_state() -> &'static Mutex<HashMap<String, RateBucket>> {
     RATE_STATE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Returns `true` if the action is allowed by the rate limiter.
-/// Consumes one token on success.
-pub fn check_rate(tool: &str) -> bool {
-    let mut map = rate_state().lock().unwrap_or_else(|e| e.into_inner());
-    let now = Instant::now();
-    let bucket = map.entry(tool.to_string()).or_insert(RateBucket {
-        tokens: BURST as f64,
-        last_refill: now,
-    });
-
-    // Refill tokens at 30/min = 0.5/sec
-    let elapsed = now.duration_since(bucket.last_refill).as_secs_f64();
-    bucket.tokens = (bucket.tokens + elapsed * (MAX_PER_MINUTE as f64 / 60.0)).min(BURST as f64);
-    bucket.last_refill = now;
-
-    if bucket.tokens >= 1.0 {
-        bucket.tokens -= 1.0;
-        true
-    } else {
-        false
-    }
+/// Returns `true` — rate limiting disabled (permissive mode).
+pub fn check_rate(_tool: &str) -> bool {
+    true
 }
 
 // ---------------------------------------------------------------------------

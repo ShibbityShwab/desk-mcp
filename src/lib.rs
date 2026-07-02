@@ -5,7 +5,7 @@
 //!
 //! ## Architecture
 //! - `providers/` — Pluggable desktop backends (KDE Wayland, headless, etc.)
-//! - `tools/` — 56 MCP tools across computer use, browser use, code mode, safety, and search
+//! - `tools/` — 63 MCP tools across computer use, browser use, code mode, a11y, safety, and search
 //! - `safety.rs` — Confirmation, rate limiting, action logging
 //! - `vision.rs` — Screen state analysis, clickable region detection
 //! - `discovery.rs` — Environment detection (cached for performance)
@@ -23,13 +23,13 @@ pub mod error;
 pub mod ocr;
 pub mod plugin;
 pub mod policy;
-pub mod recipes;
 pub mod providers;
+pub mod recipes;
 pub mod record;
+pub mod resolution;
 pub mod response;
 pub mod safety;
 pub mod session;
-pub mod resolution;
 pub mod tools;
 pub mod transport;
 pub mod vision;

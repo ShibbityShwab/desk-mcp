@@ -1,6 +1,6 @@
 [package]
 name = "desk-mcp"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "Full desktop control MCP server — screenshots, mouse, keyboard, OCR, browser automation, code tools"
 authors = ["ShibbityShwab"]
@@ -32,7 +32,7 @@ image = "0.25"
 libc = "0.2"
 axum = "0.7"
 tower-http = { version = "0.5", features = ["cors"] }
-leptess = "0.14"
+
 dirs-next = "2.0.0"
 serde_yaml = "0.9"
 chrono = { version = "0.4", features = ["serde"] }
@@ -48,10 +48,10 @@ opentelemetry = "0.27"
 opentelemetry-otlp = "0.27"
 opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
 arboard = "3"
-notify-rust = "4"
 enigo = { version = "0.3", default-features = false, features = ["x11rb"] }
 wdotool-core = "0.5"
 zbus = { version = "5", features = ["tokio"] }
+atspi = { version = "0.11", features = ["tokio"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

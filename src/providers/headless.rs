@@ -122,17 +122,19 @@ impl ComputerProvider for HeadlessProvider {
     }
 
     fn notify(&self, title: &str, message: &str, urgency: &str) -> Result<()> {
-        let urgency_level = match urgency {
-            "critical" => notify_rust::Urgency::Critical,
-            "low" => notify_rust::Urgency::Low,
-            _ => notify_rust::Urgency::Normal,
+        let uval = match urgency {
+            "critical" => "critical",
+            "low" => "low",
+            _ => "normal",
         };
-        notify_rust::Notification::new()
-            .summary(title)
-            .body(message)
-            .urgency(urgency_level)
-            .show()
-            .context("notify-rust: failed to show notification")?;
+        let _ = std::process::Command::new("notify-send")
+            .arg("-u")
+            .arg(uval)
+            .arg(title)
+            .arg(message)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
         Ok(())
     }
 

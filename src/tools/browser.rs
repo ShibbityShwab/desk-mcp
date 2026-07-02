@@ -3,6 +3,8 @@
 //! Uses chromiumoxide (pure Rust Chrome DevTools Protocol client)
 //! to control Chromium/Chrome browsers headless or with a visible window.
 
+use crate::tools::browser_cdp::*;
+
 use crate::response::{self, ToolResponse};
 use anyhow::Result;
 use chromiumoxide::{
@@ -40,14 +42,6 @@ impl Drop for BrowserState {
     }
 }
 
-/// Find a free TCP port for Chrome DevTools.
-fn find_free_port() -> Result<u16, String> {
-    use std::net::TcpListener;
-    TcpListener::bind("127.0.0.1:0")
-        .map_err(|e| format!("Cannot find free port: {e}"))
-        .and_then(|l| l.local_addr().map(|a| a.port()).map_err(|e| format!("{e}")))
-}
-
 /// Handle all browser tool calls
 pub async fn handle(name: &str, args: Value, session_id: Option<&str>) -> ToolResponse {
     let result = handle_inner(name, args, session_id).await;
@@ -57,7 +51,11 @@ pub async fn handle(name: &str, args: Value, session_id: Option<&str>) -> ToolRe
     }
 }
 
-async fn handle_inner(name: &str, mut args: Value, session_id: Option<&str>) -> Result<Value, String> {
+async fn handle_inner(
+    name: &str,
+    mut args: Value,
+    session_id: Option<&str>,
+) -> Result<Value, String> {
     match name {
         "browser_launch" => browser_launch(&mut args, session_id).await,
         _ => {
@@ -113,60 +111,6 @@ pub async fn get_page_for_session(session_id: Option<&str>) -> Result<Page, Stri
     get_page().await
 }
 
-// ═══════════════════ HELPERS ═══════════════════
-
-/// Connect to a running Chrome DevTools endpoint on localhost.
-///
-/// Uses a custom reqwest client with timeouts to fetch `/json/version`,
-/// then passes the WebSocket URL directly to `Browser::connect()` wrapped
-/// in a 10s timeout. This avoids chromiumoxide's internal HTTP client
-/// (reqwest 0.13) which can hang indefinitely on some systems.
-async fn connect_to_cdp_port(
-    port: u16,
-) -> Result<(Browser, chromiumoxide::handler::Handler), String>
-{
-    let version_url = format!("http://localhost:{port}/json/version");
-
-    // Custom reqwest client with timeouts
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(3))
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
-
-    let version_body = client
-        .get(&version_url)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to reach Chrome DevTools on port {port}: {e}"))?
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read /json/version on port {port}: {e}"))?;
-
-    let version_json: serde_json::Value = serde_json::from_str(&version_body)
-        .map_err(|e| format!("Failed to parse /json/version on port {port}: {e}"))?;
-
-    let ws_url_raw = version_json["webSocketDebuggerUrl"]
-        .as_str()
-        .ok_or_else(|| format!("No webSocketDebuggerUrl in /json/version response on port {port}"))?;
-
-    // Replace localhost with 127.0.0.1 — some async-tungstenite builds
-    // hang on localhost DNS resolution under tokio.
-    let ws_url = ws_url_raw.replace("localhost", "127.0.0.1");
-
-    tracing::info!(port = port, ws_url = %ws_url, "connecting to Chrome DevTools WebSocket");
-
-    let connect_result =
-        tokio::time::timeout(Duration::from_secs(10), Browser::connect(ws_url)).await;
-
-    match connect_result {
-        Ok(Ok(pair)) => Ok(pair),
-        Ok(Err(e)) => Err(format!("CDP handshake failed on port {port}: {e}")),
-        Err(_elapsed) => Err(format!(
-            "CDP handshake timed out after 10s on port {port}. Chrome may be hung."
-        )),
-    }
-}
-
 // ═══════════════════ TOOL HANDLERS ═══════════════════
 
 async fn browser_launch(args: &mut Value, session_id: Option<&str>) -> Result<Value, String> {
@@ -214,7 +158,9 @@ async fn browser_launch(args: &mut Value, session_id: Option<&str>) -> Result<Va
                         });
 
                         if let Some(sid) = session_id {
-                            if let Some(session) = crate::session::SESSIONS.get_session(&sid.to_string()) {
+                            if let Some(session) =
+                                crate::session::SESSIONS.get_session(&sid.to_string())
+                            {
                                 session.attach_page(page_for_session).await;
                             }
                         }

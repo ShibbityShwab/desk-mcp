@@ -1,12 +1,13 @@
-//! OCR engine using Tesseract 5 via leptess.
+//! OCR engine using the `tesseract` CLI binary.
 //!
-//! Tesseract is CPU-only and ~3-5x more accurate on screen text than ocrs.
-//! Leptonica handles image preprocessing, Tesseract handles recognition.
+//! Uses the installed `tesseract` command-line tool for recognition.
+//! Falls back gracefully when Tesseract is not installed.
+//! Much more portable than C library bindings (no ABI compatibility issues).
 
 use anyhow::{Context, Result};
 use image::{DynamicImage, ImageFormat};
-use leptess::{LepTess, Variable};
 use serde::{Deserialize, Serialize};
+use std::process::Command;
 
 use crate::vision::ClickableRegion;
 
@@ -25,38 +26,21 @@ pub struct OcrBounds {
     pub height: i32,
 }
 
-// Thread-local Tesseract engine for reuse across calls.
-std::thread_local! {
-    static TESS: std::cell::RefCell<Option<LepTess>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Get (or initialize) the thread-local Tesseract engine.
-fn with_tess<F, R>(f: F) -> Result<R>
-where
-    F: FnOnce(&mut LepTess) -> Result<R>,
-{
-    TESS.with(|cell| {
-        let mut opt = cell.borrow_mut();
-        if opt.is_none() {
-            let mut tess = LepTess::new(Some("eng"), "eng").context(
-                "Tesseract: failed to initialize. Is tesseract and eng.traineddata installed?",
-            )?;
-            // Optimize for screen text — assume uniform block of text
-            tess.set_variable(Variable::TesseditPagesegMode, "6")?;
-            *opt = Some(tess);
-        }
-        f(opt.as_mut().unwrap())
-    })
+/// Check if tesseract binary is available.
+pub fn is_available() -> bool {
+    Command::new("tesseract")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Convenience wrapper: extract text from PNG bytes without region cropping.
-/// Used by vision.rs for the main screen_state() flow.
 pub fn ocr(png_bytes: &[u8]) -> Result<Vec<OcrItem>> {
     extract_text(png_bytes, None)
 }
 
 /// Find text in a set of OcrItems, optionally with partial matching.
-/// Returns the first matching item (or None).
 pub fn find_text<'a>(items: &'a [OcrItem], text: &str, partial: bool) -> Option<&'a OcrItem> {
     let lower = text.to_lowercase();
     items.iter().find(|item| {
@@ -70,7 +54,6 @@ pub fn find_text<'a>(items: &'a [OcrItem], text: &str, partial: bool) -> Option<
 }
 
 /// Find text at or near specific screen coordinates.
-/// Crops a region around (x, y) and OCRs just that area.
 pub fn find_text_at(png_bytes: &[u8], x: i32, y: i32) -> Result<Vec<OcrItem>> {
     use crate::vision::ElementType;
     let region = crate::vision::ClickableRegion {
@@ -87,93 +70,104 @@ pub fn find_text_at(png_bytes: &[u8], x: i32, y: i32) -> Result<Vec<OcrItem>> {
 /// Extract text from a PNG screenshot buffer.
 /// Returns Vec<OcrItem> with text, bounding boxes, and confidence per word/line.
 pub fn extract_text(png_bytes: &[u8], region: Option<&ClickableRegion>) -> Result<Vec<OcrItem>> {
+    if !is_available() {
+        return Err(anyhow::anyhow!(
+            "Tesseract is not installed. Install with: sudo pacman -S tesseract tesseract-data-eng"
+        ));
+    }
+
     // Decode PNG to image
-    let img =
-        image::load_from_memory(png_bytes).context("Tesseract: failed to decode PNG image")?;
+    let img = image::load_from_memory(png_bytes)
+        .context("OCR: failed to decode PNG image")?;
 
     let processed = if let Some(r) = region {
-        let cropped = img.crop_imm(r.x as u32, r.y as u32, r.width.max(1), r.height.max(1));
+        let cropped = img.crop_imm(
+            r.x as u32,
+            r.y as u32,
+            (r.width.max(1)) as u32,
+            (r.height.max(1)) as u32,
+        );
         preprocess_image(&cropped)
     } else {
         preprocess_image(&img)
     };
 
-    // Encode to PNG bytes for leptess
-    let mut out = Vec::new();
+    // Write preprocessed image to temp file
+    let mut tmp = tempfile::NamedTempFile::new()
+        .context("OCR: failed to create temp file")?;
     processed
-        .write_to(&mut std::io::Cursor::new(&mut out), ImageFormat::Png)
-        .context("Tesseract: failed to re-encode preprocessed image")?;
+        .write_to(&mut tmp, ImageFormat::Png)
+        .context("OCR: failed to write temp PNG")?;
+    let tmp_path = tmp.path().to_string_lossy().to_string();
 
-    with_tess(|tess| {
-        tess.set_image_from_mem(&out)
-            .context("Tesseract: failed to set image from memory")?;
+    // Run tesseract with TSV output for bounding boxes
+    let output = Command::new("tesseract")
+        .arg(&tmp_path)
+        .arg("stdout")
+        .arg("-l")
+        .arg("eng")
+        .arg("--psm")
+        .arg("6")
+        .arg("tsv")
+        .output()
+        .context("OCR: failed to run tesseract. Install: sudo pacman -S tesseract tesseract-data-eng")?;
 
-        // Get word-level bounding boxes
-        // RIL_WORD = 3 (page iterator level: word)
-        let boxes = tess
-            .get_component_boxes(3, true)
-            .context("Tesseract: failed to get word bounding boxes")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("Tesseract failed: {}", stderr.trim()));
+    }
 
-        let n = boxes.get_n();
-        if n == 0 {
-            // Fallback: get full page text only (no bounding boxes)
-            let full_text = tess.get_utf8_text()?;
-            let lines: Vec<OcrItem> = full_text
-                .lines()
-                .filter(|l| !l.trim().is_empty())
-                .map(|line| OcrItem {
-                    text: line.trim().to_string(),
-                    bounds: None,
-                    confidence: 0.0,
-                })
-                .collect();
-            return Ok(lines);
-        }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let items = parse_tsv(&stdout);
 
-        let mut items: Vec<OcrItem> = Vec::new();
-        for i in 0..n {
-            if let Some(b) = boxes.get_box(i) {
-                // Get geometry first (before moving b into leptess Box)
-                let mut bx = 0i32;
-                let mut by = 0i32;
-                let mut bw = 0i32;
-                let mut bh = 0i32;
-                b.get_geometry(Some(&mut bx), Some(&mut by), Some(&mut bw), Some(&mut bh));
+    if items.is_empty() {
+        return Err(anyhow::anyhow!("OCR: no text found in image"));
+    }
 
-                // Set recognition region to this word box
-                let lb = leptess::leptonica::Box { raw: b };
-                tess.set_rectangle_from_box(&lb);
-                let text = tess.get_utf8_text().unwrap_or_default().trim().to_string();
-                if text.is_empty() {
-                    continue;
-                }
-                let conf = (tess.mean_text_conf() as f32 / 100.0).clamp(0.0, 1.0);
-                items.push(OcrItem {
-                    text,
-                    bounds: Some(OcrBounds {
-                        x: bx,
-                        y: by,
-                        width: bw.max(1),
-                        height: bh.max(1),
-                    }),
-                    confidence: conf,
-                });
-            }
-        }
-
-        Ok(items)
-    })
+    Ok(items)
 }
 
-/// Preprocess image for better OCR accuracy:
-/// - Convert to grayscale
-/// - Scale up if too small
+/// Parse Tesseract TSV output into OcrItem list.
+fn parse_tsv(tsv: &str) -> Vec<OcrItem> {
+    let mut items = Vec::new();
+    for line in tsv.lines().skip(1) {
+        let fields: Vec<&str> = line.split('\t').collect();
+        if fields.len() < 12 {
+            continue;
+        }
+        let level = fields[0].parse::<u32>().unwrap_or(0);
+        if level != 5 {
+            continue;
+        }
+        let text = fields[11].trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        let left = fields[6].parse::<i32>().unwrap_or(0);
+        let top = fields[7].parse::<i32>().unwrap_or(0);
+        let width = fields[8].parse::<i32>().unwrap_or(1);
+        let height = fields[9].parse::<i32>().unwrap_or(1);
+        let conf = fields[10].parse::<f32>().unwrap_or(0.0) / 100.0;
+
+        items.push(OcrItem {
+            text,
+            bounds: Some(OcrBounds {
+                x: left,
+                y: top,
+                width: width.max(1),
+                height: height.max(1),
+            }),
+            confidence: conf.clamp(0.0, 1.0),
+        });
+    }
+    items
+}
+
+/// Preprocess image for better OCR accuracy.
 fn preprocess_image(img: &DynamicImage) -> DynamicImage {
     let gray = img.to_luma8();
     let (w, h) = gray.dimensions();
-
     let scale = if w < 300 || h < 200 { 2.0 } else { 1.0 };
-
     if scale > 1.0 {
         let resized = image::imageops::resize(
             &gray,

@@ -90,10 +90,7 @@ pub enum DenyConditionType {
     /// Deny if the shell command contains any of these substrings.
     CommandNotContains(Vec<String>),
     /// Deny if a named param field matches any of the given values.
-    ParamsContains {
-        field: String,
-        values: Vec<String>,
-    },
+    ParamsContains { field: String, values: Vec<String> },
     /// Deny if the browser URL domain is not in this allowlist.
     DomainNotIn(Vec<String>),
 }
@@ -126,8 +123,13 @@ pub struct SessionPolicy {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PolicyDecision {
     Allow,
-    Deny { reason: String },
-    RequireConfirmation { message: String, params: serde_json::Value },
+    Deny {
+        reason: String,
+    },
+    RequireConfirmation {
+        message: String,
+        params: serde_json::Value,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -147,7 +149,11 @@ pub fn increment_session_action() {
 /// Check session limits (max actions, max duration). Returns `Err(reason)`
 /// if a limit is exceeded.
 pub fn check_session_limits() -> Result<(), String> {
-    let config = load_config();
+    check_session_limits_with_config(load_config())
+}
+
+/// Check session limits against a specific policy config (for testing).
+pub(crate) fn check_session_limits_with_config(config: &PolicyConfig) -> Result<(), String> {
 
     // Max actions
     let actions = SESSION_ACTIONS.lock().map_err(|e| e.to_string())?;
@@ -184,25 +190,29 @@ fn config_path() -> PathBuf {
 }
 
 /// Load the policy config, caching it for the lifetime of the process.
+/// Set `DESKMCP_FORCE_DEFAULT_POLICY=1` to bypass user config and use the
+/// built-in default (used by integration tests).
 fn load_config() -> &'static PolicyConfig {
     CONFIG.get_or_init(|| {
+        if std::env::var("DESKMCP_FORCE_DEFAULT_POLICY").as_deref() == Ok("1") {
+            tracing::info!("DESKMCP_FORCE_DEFAULT_POLICY=1 — using built-in default policy.");
+            return default_config();
+        }
         let path = config_path();
         match std::fs::read_to_string(&path) {
-            Ok(yaml) => {
-                match serde_yaml::from_str::<PolicyConfig>(&yaml) {
-                    Ok(cfg) => {
-                        tracing::info!("Loaded policy from {}", path.display());
-                        cfg
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to parse {}: {e}. Using default policy.",
-                            path.display()
-                        );
-                        default_config()
-                    }
+            Ok(yaml) => match serde_yaml::from_str::<PolicyConfig>(&yaml) {
+                Ok(cfg) => {
+                    tracing::info!("Loaded policy from {}", path.display());
+                    cfg
                 }
-            }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to parse {}: {e}. Using default policy.",
+                        path.display()
+                    );
+                    default_config()
+                }
+            },
             Err(_) => {
                 tracing::info!(
                     "No policy file at {} — using built-in default policy.",
@@ -283,7 +293,15 @@ impl Default for PolicyRule {
 /// - `RequireConfirmation` if the tool needs user approval.
 /// - `Allow` otherwise.
 pub fn evaluate(tool: &str, args: &serde_json::Value) -> PolicyDecision {
-    let config = load_config();
+    evaluate_with_config(tool, args, load_config())
+}
+
+/// Evaluate a tool call against a specific policy config (for testing).
+pub(crate) fn evaluate_with_config(
+    tool: &str,
+    args: &serde_json::Value,
+    config: &PolicyConfig,
+) -> PolicyDecision {
 
     let mut best: Option<PolicyDecision> = None;
 
@@ -365,10 +383,7 @@ fn check_condition(cond: &DenyConditionType, args: &serde_json::Value) -> bool {
     match cond {
         DenyConditionType::CommandNotContains(blocked) => {
             // For shell_run: check the "command" field for blocked substrings.
-            let cmd = args
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("");
             !blocked.iter().any(|b| cmd.contains(b.as_str()))
         }
         DenyConditionType::ParamsContains { field, values } => {
@@ -381,16 +396,15 @@ fn check_condition(cond: &DenyConditionType, args: &serde_json::Value) -> bool {
         }
         DenyConditionType::DomainNotIn(allowed) => {
             // For browser_navigate: extract domain from URL and check allowlist.
-            let url = args
-                .get("url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+            let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
             let domain = extract_domain(url);
             if domain.is_empty() {
                 // If we can't parse the URL, deny it (fail closed).
                 return false;
             }
-            allowed.iter().any(|a| domain == a.as_str() || domain.ends_with(&format!(".{a}")))
+            allowed
+                .iter()
+                .any(|a| domain == a.as_str() || domain.ends_with(&format!(".{a}")))
         }
     }
 }
@@ -410,10 +424,7 @@ fn extract_domain(url: &str) -> &str {
 fn check_caps(cap: &CapRule, args: &serde_json::Value) -> Option<String> {
     // Domain allowlist
     if !cap.domains.is_empty() {
-        let url = args
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
         let domain = extract_domain(url);
         if domain.is_empty()
             || !cap
@@ -435,12 +446,7 @@ fn check_caps(cap: &CapRule, args: &serde_json::Value) -> Option<String> {
             .or_else(|| args.get("file"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        if path.is_empty()
-            || !cap
-                .paths
-                .iter()
-                .any(|p| path.starts_with(p.as_str()))
-        {
+        if path.is_empty() || !cap.paths.iter().any(|p| path.starts_with(p.as_str())) {
             return Some(format!(
                 "Path '{}' is not in the allowed prefix list for this tool.",
                 path
@@ -450,10 +456,7 @@ fn check_caps(cap: &CapRule, args: &serde_json::Value) -> Option<String> {
 
     // Max duration
     if let Some(max_secs) = cap.max_duration_secs {
-        let timeout = args
-            .get("timeout")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(30.0);
+        let timeout = args.get("timeout").and_then(|v| v.as_f64()).unwrap_or(30.0);
         if timeout > max_secs as f64 {
             return Some(format!(
                 "Timeout {timeout}s exceeds maximum allowed {max_secs}s for this tool."
@@ -468,30 +471,42 @@ fn check_caps(cap: &CapRule, args: &serde_json::Value) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Test helper: evaluate against the built-in default policy config,
+    /// not the user's overridden policy.yaml.
+    fn default_eval(tool: &str, args: &serde_json::Value) -> PolicyDecision {
+        evaluate_with_config(tool, args, &default_config())
+    }
+
     #[test]
     fn test_default_policy_allows_reads() {
-        let decision = evaluate("screenshot", &serde_json::json!({}));
+        let decision = default_eval("screenshot", &serde_json::json!({}));
         assert_eq!(decision, PolicyDecision::Allow);
     }
 
     #[test]
     fn test_default_policy_confirms_writes() {
-        let decision = evaluate("shell_run", &serde_json::json!({"command": "ls -la"}));
-        assert!(matches!(decision, PolicyDecision::RequireConfirmation { .. }));
+        let decision = default_eval("shell_run", &serde_json::json!({"command": "ls -la"}));
+        assert!(matches!(
+            decision,
+            PolicyDecision::RequireConfirmation { .. }
+        ));
 
-        let decision = evaluate("file_write", &serde_json::json!({"path": "/tmp/test"}));
-        assert!(matches!(decision, PolicyDecision::RequireConfirmation { .. }));
+        let decision = default_eval("file_write", &serde_json::json!({"path": "/tmp/test"}));
+        assert!(matches!(
+            decision,
+            PolicyDecision::RequireConfirmation { .. }
+        ));
     }
 
     #[test]
     fn test_default_policy_blocks_dangerous_commands() {
-        let decision = evaluate(
+        let decision = default_eval(
             "shell_run",
             &serde_json::json!({"command": "sudo rm -rf /"}),
         );
         assert!(matches!(decision, PolicyDecision::Deny { .. }));
 
-        let decision = evaluate(
+        let decision = default_eval(
             "shell_run",
             &serde_json::json!({"command": "chmod 777 /etc/passwd"}),
         );
@@ -500,18 +515,21 @@ mod tests {
 
     #[test]
     fn test_default_policy_allows_safe_commands_but_confirms() {
-        let decision = evaluate(
-            "shell_run",
-            &serde_json::json!({"command": "cargo build"}),
-        );
+        let decision = default_eval("shell_run", &serde_json::json!({"command": "cargo build"}));
         // Not in deny_unless blocklist → should be RequireConfirmation
-        assert!(matches!(decision, PolicyDecision::RequireConfirmation { .. }));
+        assert!(matches!(
+            decision,
+            PolicyDecision::RequireConfirmation { .. }
+        ));
     }
 
     #[test]
     fn test_extract_domain() {
         assert_eq!(extract_domain("https://example.com/path"), "example.com");
-        assert_eq!(extract_domain("http://sub.example.com:8080/x"), "sub.example.com");
+        assert_eq!(
+            extract_domain("http://sub.example.com:8080/x"),
+            "sub.example.com"
+        );
         assert_eq!(extract_domain("file:///tmp/foo"), "");
         assert_eq!(extract_domain("example.com/path"), "example.com");
     }
@@ -556,12 +574,15 @@ mod tests {
 
     #[test]
     fn test_session_limits() {
+        // Use built-in default config (not user's overridden policy.yaml)
+        let cfg = default_config();
+
         // After reset, session should be within limits
         *SESSION_ACTIONS.lock().unwrap() = 0;
-        assert!(check_session_limits().is_ok());
+        assert!(check_session_limits_with_config(&cfg).is_ok());
 
-        // Exceed action limit
+        // Exceed action limit (default is 500)
         *SESSION_ACTIONS.lock().unwrap() = 500;
-        assert!(check_session_limits().is_err());
+        assert!(check_session_limits_with_config(&cfg).is_err());
     }
 }

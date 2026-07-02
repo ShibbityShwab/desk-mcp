@@ -121,8 +121,7 @@ impl BrowserExtensionProvider {
     /// Called from within a `block_on` context so `tokio::spawn` is available.
     fn spawn_ws_task(&self) -> Result<Arc<WsConnection>> {
         let url = self.ws_url.clone();
-        let (tx, mut rx) =
-            tokio::sync::mpsc::channel::<WsCommand>(32);
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<WsCommand>(32);
 
         // Spawn a Tokio task (not a std thread) so I/O is properly
         // integrated with the runtime.
@@ -183,7 +182,9 @@ impl BrowserExtensionProvider {
         let mut resp_buf = [0u8; 4096];
         let mut resp_data = Vec::new();
         loop {
-            let n = stream.read(&mut resp_buf).context("read upgrade response")?;
+            let n = stream
+                .read(&mut resp_buf)
+                .context("read upgrade response")?;
             if n == 0 {
                 bail!("connection closed during WebSocket handshake");
             }
@@ -199,12 +200,14 @@ impl BrowserExtensionProvider {
 
         let resp_str = String::from_utf8_lossy(&resp_data);
         if !resp_str.contains("101") {
-            bail!("WebSocket handshake failed: {}", resp_str.lines().next().unwrap_or(""));
+            bail!(
+                "WebSocket handshake failed: {}",
+                resp_str.lines().next().unwrap_or("")
+            );
         }
 
         // Send the command frame (masked text frame)
-        send_frame(&mut stream, payload.as_bytes(), true)
-            .context("send WebSocket frame")?;
+        send_frame(&mut stream, payload.as_bytes(), true).context("send WebSocket frame")?;
 
         // Read the response frame
         let resp_bytes = read_frame(&mut stream).context("read WebSocket response frame")?;
@@ -266,7 +269,9 @@ fn generate_ws_key() -> String {
         ^ std::process::id() as u64;
     let mut state = seed;
     for b in buf.iter_mut() {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         *b = (state >> 32) as u8;
     }
     base64::engine::general_purpose::STANDARD.encode(buf)
@@ -372,7 +377,10 @@ fn read_exact(stream: &mut TcpStream, buf: &mut [u8]) -> Result<()> {
     while total < buf.len() {
         let n = stream.read(&mut buf[total..]).context("read_exact")?;
         if n == 0 {
-            bail!("connection closed unexpectedly (read {total}/{})", buf.len());
+            bail!(
+                "connection closed unexpectedly (read {total}/{})",
+                buf.len()
+            );
         }
         total += n;
     }
@@ -388,7 +396,9 @@ fn fastrand_mask() -> [u8; 4] {
     let mut state = seed.wrapping_add(1);
     let mut buf = [0u8; 4];
     for b in buf.iter_mut() {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         *b = (state >> 32) as u8;
     }
     buf
@@ -427,20 +437,11 @@ impl ComputerProvider for BrowserExtensionProvider {
     // ── Mouse ─────────────────────────────────────────────────────
 
     fn mouse_move(&self, x: i32, y: i32, _smooth: bool, _duration_ms: u64) -> Result<()> {
-        block_on(self.send_command(
-            "mouse_move",
-            serde_json::json!({"x": x, "y": y}),
-        ))?;
+        block_on(self.send_command("mouse_move", serde_json::json!({"x": x, "y": y})))?;
         Ok(())
     }
 
-    fn mouse_click(
-        &self,
-        button: &str,
-        x: Option<i32>,
-        y: Option<i32>,
-        clicks: u32,
-    ) -> Result<()> {
+    fn mouse_click(&self, button: &str, x: Option<i32>, y: Option<i32>, clicks: u32) -> Result<()> {
         let mut params = serde_json::json!({
             "button": button,
             "clicks": clicks,
@@ -489,18 +490,12 @@ impl ComputerProvider for BrowserExtensionProvider {
     // ── Keyboard ──────────────────────────────────────────────────
 
     fn keyboard_type(&self, text: &str, _delay_ms: u64) -> Result<()> {
-        block_on(self.send_command(
-            "type",
-            serde_json::json!({"text": text}),
-        ))?;
+        block_on(self.send_command("type", serde_json::json!({"text": text})))?;
         Ok(())
     }
 
     fn key_press(&self, key: &str) -> Result<()> {
-        block_on(self.send_command(
-            "key_press",
-            serde_json::json!({"key": key}),
-        ))?;
+        block_on(self.send_command("key_press", serde_json::json!({"key": key})))?;
         Ok(())
     }
 
@@ -515,10 +510,7 @@ impl ComputerProvider for BrowserExtensionProvider {
     }
 
     fn clipboard_set(&self, text: &str) -> Result<()> {
-        block_on(self.send_command(
-            "clipboard_set",
-            serde_json::json!({"text": text}),
-        ))?;
+        block_on(self.send_command("clipboard_set", serde_json::json!({"text": text})))?;
         Ok(())
     }
 
@@ -561,19 +553,19 @@ impl ComputerProvider for BrowserExtensionProvider {
     }
 
     fn focus_window(&self, title_match: &str) -> Result<WindowMatch> {
-        let result = block_on(self.send_command(
-            "focus_window",
-            serde_json::json!({"title": title_match}),
-        ))?;
+        let result =
+            block_on(self.send_command("focus_window", serde_json::json!({"title": title_match})))?;
 
         Ok(WindowMatch {
             matched: result["matched"].as_bool().unwrap_or(false),
             id: result["id"].as_u64().map(|v| v.to_string()),
             title: result["title"].as_str().map(String::from),
             app: result["app"].as_str().map(String::from),
-            candidates: result["candidates"]
-                .as_array()
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()),
+            candidates: result["candidates"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            }),
         })
     }
 
@@ -636,7 +628,11 @@ impl ComputerProvider for BrowserExtensionProvider {
                         .map(String::from),
                     actions: el["actions"]
                         .as_array()
-                        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
                         .unwrap_or_default(),
                     bounds: el.get("bounds").and_then(|b| {
                         Some(ElementBounds {
@@ -650,7 +646,11 @@ impl ComputerProvider for BrowserExtensionProvider {
                     focused: el["focused"].as_bool().unwrap_or(false),
                     children: el["children"]
                         .as_array()
-                        .map(|a| a.iter().filter_map(|v| v.as_u64().map(|n| n as u32)).collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_u64().map(|n| n as u32))
+                                .collect()
+                        })
                         .unwrap_or_default(),
                 })
             })

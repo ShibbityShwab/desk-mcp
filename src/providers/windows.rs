@@ -44,7 +44,9 @@ impl ComputerProvider for WindowsProvider {
             //   BitBlt(hdc_mem, 0, 0, w, h, hdc_screen, x, y, SRCCOPY);
             //   // Convert HBITMAP → PNG bytes via GDI+ or image crate
             //   ReleaseDC(NULL, hdc_screen);
-            Err(anyhow::anyhow!("Windows native screenshot not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native screenshot not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -57,7 +59,9 @@ impl ComputerProvider for WindowsProvider {
         if cfg!(target_os = "windows") {
             // TODO: GetSystemMetrics(SM_CXSCREEN) / GetSystemMetrics(SM_CYSCREEN)
             //   Or EnumDisplaySettings → DEVMODEW.dmPelsWidth / dmPelsHeight
-            Err(anyhow::anyhow!("Windows native get_screen_size not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native get_screen_size not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -77,7 +81,9 @@ impl ComputerProvider for WindowsProvider {
             //   input.u.mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
             //   SendInput(1, &input, size_of::<INPUT>());
             // For smooth: interpolate points and SendInput for each step with small sleep
-            Err(anyhow::anyhow!("Windows native mouse_move not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native mouse_move not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -100,7 +106,9 @@ impl ComputerProvider for WindowsProvider {
             //   for _ in 0..clicks {
             //       SendInput down; SendInput up;
             //   }
-            Err(anyhow::anyhow!("Windows native mouse_click not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native mouse_click not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -118,7 +126,9 @@ impl ComputerProvider for WindowsProvider {
             //   SendInput(...);
             // For horizontal scroll: MOUSEEVENTF_HWHEEL
             // If x/y provided: SetCursorPos first
-            Err(anyhow::anyhow!("Windows native mouse_scroll not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native mouse_scroll not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -141,7 +151,9 @@ impl ComputerProvider for WindowsProvider {
             //   interpolate with SetCursorPos over duration → SendInput(MOUSEEVENTF_LEFTUP)
             //   let steps = duration_ms / 16; // ~60 fps
             //   for i in 0..steps { SetCursorPos(lerp(x1, x2, i/steps), lerp(y1, y2, i/steps)); Sleep(16); }
-            Err(anyhow::anyhow!("Windows native mouse_drag not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native mouse_drag not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -160,7 +172,9 @@ impl ComputerProvider for WindowsProvider {
             //   SendInput for char key down → up
             //   If shift: SendInput for VK_SHIFT up
             //   Sleep(delay_ms) between keys
-            Err(anyhow::anyhow!("Windows native keyboard_type not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native keyboard_type not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -174,7 +188,9 @@ impl ComputerProvider for WindowsProvider {
             // TODO: SendInput with KEYBDINPUT → parse combo "ctrl+c", "win+shift+s"
             //   Parse modifiers: ctrl=VK_CONTROL, alt=VK_MENU, shift=VK_SHIFT, win=VK_LWIN
             //   Press modifiers down → press key down → release key → release modifiers
-            Err(anyhow::anyhow!("Windows native key_press not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native key_press not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -189,7 +205,9 @@ impl ComputerProvider for WindowsProvider {
         if cfg!(target_os = "windows") {
             // TODO: OpenClipboard(NULL) → GetClipboardData(CF_TEXT/CF_UNICODETEXT) → read
             //   Or use arboard (already in deps, cross-platform)
-            Err(anyhow::anyhow!("Windows native clipboard_get not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native clipboard_get not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -201,7 +219,9 @@ impl ComputerProvider for WindowsProvider {
     fn clipboard_set(&self, _text: &str) -> Result<()> {
         if cfg!(target_os = "windows") {
             // TODO: OpenClipboard → EmptyClipboard → SetClipboardData(CF_UNICODETEXT, ...) → CloseClipboard
-            Err(anyhow::anyhow!("Windows native clipboard_set not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native clipboard_set not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -216,7 +236,9 @@ impl ComputerProvider for WindowsProvider {
         if cfg!(target_os = "windows") {
             // TODO: CreateProcessW with pipes for stdout/stderr capture
             //   Or use std::process::Command (cross-platform)
-            Err(anyhow::anyhow!("Windows native shell_run not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native shell_run not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -232,7 +254,9 @@ impl ComputerProvider for WindowsProvider {
             // TODO: EnumWindows callback → GetWindowTextW → GetWindowThreadProcessId →
             //   GetWindowRect → build WindowInfo list
             //   WindowInfo.from(enum_windows_callback(hwnd, lparam))
-            Err(anyhow::anyhow!("Windows native list_windows not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native list_windows not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -246,7 +270,9 @@ impl ComputerProvider for WindowsProvider {
             // TODO: EnumWindows → find by title → SetForegroundWindow(hwnd)
             //   Or FindWindowW(NULL, title) for exact match
             //   Return WindowMatch with matched: true/false
-            Err(anyhow::anyhow!("Windows native focus_window not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native focus_window not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -259,7 +285,9 @@ impl ComputerProvider for WindowsProvider {
         if cfg!(target_os = "windows") {
             // TODO: GetForegroundWindow() → GetWindowTextW → GetWindowThreadProcessId →
             //   GetWindowRect → build WindowInfo
-            Err(anyhow::anyhow!("Windows native get_active_window not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native get_active_window not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -273,7 +301,9 @@ impl ComputerProvider for WindowsProvider {
     fn open_app(&self, _app_name: &str) -> Result<()> {
         if cfg!(target_os = "windows") {
             // TODO: ShellExecuteW(NULL, "open", app_name, ...) or CreateProcessW
-            Err(anyhow::anyhow!("Windows native open_app not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native open_app not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",
@@ -307,7 +337,9 @@ impl ComputerProvider for WindowsProvider {
             //   let automation: IUIAutomation = CoCreateInstance(CLSID_CUIAutomation)?;
             //   let element = automation.ElementFromHandle(foreground_hwnd)?;
             //   walk_uia_tree(element, &mut elements, &mut Vec::new())?;
-            Err(anyhow::anyhow!("Windows native get_window_state not yet implemented"))
+            Err(anyhow::anyhow!(
+                "Windows native get_window_state not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "Windows provider requires Windows. Running on {}",

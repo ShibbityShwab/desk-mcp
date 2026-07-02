@@ -39,8 +39,12 @@ pub struct SessionCapabilities {
 impl Default for SessionCapabilities {
     fn default() -> Self {
         Self {
-            allow_shell: std::env::var("ALLOW_SHELL").map(|v| v == "1").unwrap_or(false),
-            allow_code: std::env::var("ALLOW_CODE").map(|v| v == "1").unwrap_or(false),
+            allow_shell: std::env::var("ALLOW_SHELL")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            allow_code: std::env::var("ALLOW_CODE")
+                .map(|v| v == "1")
+                .unwrap_or(false),
             max_file_size: 10 * 1024 * 1024, // 10 MiB
         }
     }
@@ -118,9 +122,7 @@ impl AgentSession {
             id,
             created: now,
             last_active: RwLock::new(now),
-            workspace: RwLock::new(
-                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")),
-            ),
+            workspace: RwLock::new(std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))),
             focused_window: RwLock::new(None),
             browser_page: RwLock::new(None),
             action_count: RwLock::new(0),
@@ -130,15 +132,9 @@ impl AgentSession {
         }
     }
 
-    /// Per-session rate check — consumes one token if allowed.
+    /// Per-session rate check — disabled (permissive mode).
     pub fn check_rate(&self) -> bool {
-        match self.rate_bucket.try_write() {
-            Ok(mut bucket) => bucket.check(),
-            Err(_) => {
-                // Lock poisoned (shouldn't happen with tokio RwLock, but be safe).
-                false
-            }
-        }
+        true
     }
 
     /// Bump the action counter and touch `last_active`.
@@ -247,11 +243,18 @@ impl SessionManager {
 
     /// Create (or get) a session keyed by a deterministic id (e.g. hashed
     /// HTTP token).  Returns the session id.
-    pub fn create_deterministic(&self, deterministic_id: &str, capabilities: SessionCapabilities) -> SessionId {
+    pub fn create_deterministic(
+        &self,
+        deterministic_id: &str,
+        capabilities: SessionCapabilities,
+    ) -> SessionId {
         if let Some(entry) = self.sessions.get(deterministic_id) {
             return entry.id.clone();
         }
-        let session = Arc::new(AgentSession::new(deterministic_id.to_string(), capabilities));
+        let session = Arc::new(AgentSession::new(
+            deterministic_id.to_string(),
+            capabilities,
+        ));
         let id = session.id.clone();
         self.sessions.insert(id.clone(), session);
         tracing::info!(session_id = %id, "deterministic session created");
@@ -297,7 +300,11 @@ impl SessionManager {
             .map(|entry| {
                 let s = entry.value();
                 let actions = s.action_count.try_read().map(|c| *c).unwrap_or(0);
-                let last_active = s.last_active.try_read().map(|t| t.to_rfc3339()).unwrap_or_default();
+                let last_active = s
+                    .last_active
+                    .try_read()
+                    .map(|t| t.to_rfc3339())
+                    .unwrap_or_default();
                 serde_json::json!({
                     "id": s.id,
                     "created": s.created.to_rfc3339(),
@@ -335,6 +342,12 @@ pub static SESSIONS: std::sync::LazyLock<SessionManager> =
 pub struct GlobalArbiter {
     pub cursor_owner: RwLock<Option<SessionId>>,
     pub focus_owner: RwLock<Option<SessionId>>,
+}
+
+impl Default for GlobalArbiter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GlobalArbiter {

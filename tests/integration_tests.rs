@@ -17,10 +17,20 @@ use desk_mcp::providers::{
 };
 use desk_mcp::record::{self, TraceRecorder};
 use desk_mcp::response;
-use desk_mcp::session::{SESSIONS, SessionCapabilities};
+use desk_mcp::session::{SessionCapabilities, SESSIONS};
 use serde_json::json;
 use std::collections::HashMap;
+use std::sync::Once;
 use std::time::Instant;
+
+/// Force the built-in default policy (ignore user's policy.yaml) for
+/// deterministic integration tests.
+static FORCE_DEFAULT_POLICY: Once = Once::new();
+fn init_test_policy() {
+    FORCE_DEFAULT_POLICY.call_once(|| {
+        std::env::set_var("DESKMCP_FORCE_DEFAULT_POLICY", "1");
+    });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Pillar I: Desktop Control — MockProvider tests
@@ -44,7 +54,10 @@ fn test_mock_screenshot_returns_minimal_png() {
     let png = mock.screenshot(None).unwrap();
     // Should return a minimal valid PNG (1×1 black pixel)
     assert!(!png.is_empty());
-    assert!(png.len() > 60, "PNG must be at least ~67 bytes (IHDR+IDAT+IEND)");
+    assert!(
+        png.len() > 60,
+        "PNG must be at least ~67 bytes (IHDR+IDAT+IEND)"
+    );
 
     // Check PNG magic bytes
     assert_eq!(&png[0..8], b"\x89PNG\r\n\x1a\n");
@@ -57,11 +70,10 @@ fn test_mock_screenshot_with_bytes() {
         0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // signature
         0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52, // IHDR len
         0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, // 1×1
-        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-        0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41, // IDAT
-        0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
-        0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
-        0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, // IEND
+        0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44,
+        0x41, // IDAT
+        0x54, 0x08, 0xD7, 0x63, 0xF8, 0xFF, 0xFF, 0x3F, 0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC,
+        0x59, 0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, // IEND
         0x44, 0xAE, 0x42, 0x60, 0x82,
     ];
 
@@ -462,7 +474,10 @@ fn test_record_replay_roundtrip() {
             _ => None,
         })
         .collect();
-    assert_eq!(methods, vec!["mouse_click", "keyboard_type", "screenshot", "shell_run"]);
+    assert_eq!(
+        methods,
+        vec!["mouse_click", "keyboard_type", "screenshot", "shell_run"]
+    );
 }
 
 #[test]
@@ -486,6 +501,7 @@ fn test_trace_recorder_wraps_provider() {
 
 #[test]
 fn test_policy_allows_read_tools() {
+    init_test_policy();
     let decision = policy::evaluate("screenshot", &json!({}));
     assert_eq!(decision, PolicyDecision::Allow);
 
@@ -498,6 +514,7 @@ fn test_policy_allows_read_tools() {
 
 #[test]
 fn test_policy_confirms_shell_run() {
+    init_test_policy();
     let decision = policy::evaluate("shell_run", &json!({"command": "ls"}));
     assert!(
         matches!(decision, PolicyDecision::RequireConfirmation { .. }),
@@ -508,15 +525,23 @@ fn test_policy_confirms_shell_run() {
 
 #[test]
 fn test_policy_confirms_file_write() {
+    init_test_policy();
     let decision = policy::evaluate("file_write", &json!({"path": "/tmp/test"}));
-    assert!(matches!(decision, PolicyDecision::RequireConfirmation { .. }));
+    assert!(matches!(
+        decision,
+        PolicyDecision::RequireConfirmation { .. }
+    ));
 
     let decision = policy::evaluate("file_edit", &json!({"path": "/tmp/test"}));
-    assert!(matches!(decision, PolicyDecision::RequireConfirmation { .. }));
+    assert!(matches!(
+        decision,
+        PolicyDecision::RequireConfirmation { .. }
+    ));
 }
 
 #[test]
 fn test_policy_blocks_dangerous_commands() {
+    init_test_policy();
     let blocked = [
         "rm -rf /",
         "sudo rm -rf /",
@@ -540,13 +565,18 @@ fn test_policy_blocks_dangerous_commands() {
 
 #[test]
 fn test_policy_allows_safe_shell_but_confirms() {
+    init_test_policy();
     let decision = policy::evaluate("shell_run", &json!({"command": "cargo build --release"}));
     // Safe command: not in deny blocklist, but requires confirmation
-    assert!(matches!(decision, PolicyDecision::RequireConfirmation { .. }));
+    assert!(matches!(
+        decision,
+        PolicyDecision::RequireConfirmation { .. }
+    ));
 }
 
 #[test]
 fn test_policy_auto_approve_threshold() {
+    init_test_policy();
     // shell_run has auto_approve_after = 5 in default config
     let threshold = policy::auto_approve_threshold("shell_run");
     assert_eq!(threshold, Some(5));
@@ -611,17 +641,12 @@ fn test_recipe_substitution_exact_match() {
     ]);
     let template = json!({"url": "https://github.com/{repo}/issues/new"});
     let result = desk_mcp::recipes::substitute_params(&template, &params);
-    assert_eq!(
-        result["url"],
-        "https://github.com/org/repo/issues/new"
-    );
+    assert_eq!(result["url"], "https://github.com/org/repo/issues/new");
 }
 
 #[test]
 fn test_recipe_substitution_partial_interpolation() {
-    let params = HashMap::from([
-        ("name".into(), "Alice".into()),
-    ]);
+    let params = HashMap::from([("name".into(), "Alice".into())]);
     let template = json!("Hello {name}, welcome!");
     let result = desk_mcp::recipes::substitute_params(&template, &params);
     assert_eq!(result, "Hello Alice, welcome!");
@@ -646,9 +671,7 @@ fn test_recipe_substitution_recursive_object() {
 
 #[test]
 fn test_recipe_substitution_array() {
-    let params = HashMap::from([
-        ("dir".into(), "/tmp".into()),
-    ]);
+    let params = HashMap::from([("dir".into(), "/tmp".into())]);
     let template = json!(["{dir}/a", "{dir}/b"]);
     let result = desk_mcp::recipes::substitute_params(&template, &params);
     assert_eq!(result[0], "/tmp/a");
@@ -657,9 +680,7 @@ fn test_recipe_substitution_array() {
 
 #[test]
 fn test_recipe_substitution_no_match_preserves() {
-    let params = HashMap::from([
-        ("repo".into(), "org/repo".into()),
-    ]);
+    let params = HashMap::from([("repo".into(), "org/repo".into())]);
     let template = json!({"url": "https://github.com/{repo}/issues", "title": "fixed"});
     let result = desk_mcp::recipes::substitute_params(&template, &params);
     assert_eq!(result["url"], "https://github.com/org/repo/issues");
@@ -791,12 +812,7 @@ fn test_discovery_refresh_browsers() {
 #[ignore = "requires real system /proc access for browser discovery"]
 async fn test_tool_dispatch_browser_refresh() {
     // browser_refresh does not require a provider — pure discovery
-    let resp = desk_mcp::tools::dispatch(
-        "browser_refresh",
-        json!({}),
-        None,
-    )
-    .await;
+    let resp = desk_mcp::tools::dispatch("browser_refresh", json!({}), None).await;
     assert!(resp.ok, "browser_refresh should succeed: {:?}", resp.error);
 
     let result = resp.result.unwrap();
@@ -858,39 +874,33 @@ async fn test_tool_dispatch_request_and_approve_confirmation() {
     .await;
     let id2 = resp.result.unwrap()["id"].as_str().unwrap().to_string();
 
-    let resp = desk_mcp::tools::dispatch(
-        "deny",
-        json!({"id": id2, "reason": "not needed"}),
-        None,
-    )
-    .await;
+    let resp =
+        desk_mcp::tools::dispatch("deny", json!({"id": id2, "reason": "not needed"}), None).await;
     assert!(resp.ok);
 }
 
 #[tokio::test]
 async fn test_tool_dispatch_policy_denied_blocked_command() {
+    init_test_policy();
     // Dangerous command should be denied at the policy level
-    let resp = desk_mcp::tools::dispatch(
-        "shell_run",
-        json!({"command": "sudo rm -rf /"}),
-        None,
-    )
-    .await;
+    let resp =
+        desk_mcp::tools::dispatch("shell_run", json!({"command": "sudo rm -rf /"}), None).await;
     assert!(!resp.ok);
     let err = resp.error.unwrap();
     assert_eq!(err.code, "POLICY_DENIED");
-    assert!(err.message.contains("Dangerous"), "message was: {}", err.message);
+    assert!(
+        err.message.contains("Dangerous"),
+        "message was: {}",
+        err.message
+    );
 }
 
 #[tokio::test]
 async fn test_tool_dispatch_policy_confirmation_required() {
+    init_test_policy();
     // Safe shell command triggers RequireConfirmation
-    let resp = desk_mcp::tools::dispatch(
-        "shell_run",
-        json!({"command": "cargo build"}),
-        None,
-    )
-    .await;
+    let resp =
+        desk_mcp::tools::dispatch("shell_run", json!({"command": "cargo build"}), None).await;
     // Should return CONFIRMATION_REQUIRED (not yet approved for session)
     assert!(!resp.ok);
     let err = resp.error.unwrap();

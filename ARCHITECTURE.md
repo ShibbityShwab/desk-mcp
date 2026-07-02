@@ -28,10 +28,14 @@ call tools by name with JSON arguments and receive `{ok, result, error}` respons
 │     Environment & capability scan    │
 ├──────────────────────────────────────┤
 │          providers/                  │
-│  ┌────────────┬──────────────┐       │
-│  │ kde_wayland│  headless    │       │
-│  │ (KDE+Wld) │  (no display) │       │
-│  └────────────┴──────────────┘       │
+│  ┌────────────┬──────────────┬──────┐│
+│  │kwin_dbus   │kde_wayland   │browsr││
+│  │(native KWin│(wdotool-core │_ext  ││
+│  │ D-Bus)     │ + ydotool)   │(WS)  ││
+│  ├────────────┼──────────────┼──────┤│
+│  │  headless  │  mock        │macOS ││
+│  │(no display)│(testing)     │/Win  ││
+│  └────────────┴──────────────┴──────┘│
 ├──────────────────────────────────────┤
 │           System tools               │
 │  spectacle, grim, ydotool, xdotool,  │
@@ -169,6 +173,14 @@ panic = "abort"       # Abort on panic (smaller binary, no unwind tables)
 | `thiserror` | Typed error derivation |
 | `tracing` | Structured logging |
 | `tempfile` | Temporary file/dir creation |
+| `wdotool-core` | Wayland input via libei |
+| `zbus` | KWin D-Bus window management |
+| `atspi` | Pure-Rust AT-SPI client (stub) |
+| `dashmap` | Concurrent session registry |
+| `serde_yaml` | Policy engine config |
+| `libloading` | Dynamic plugin loading |
+| `uuid` | Session identifiers |
+| `dirs-next` | XDG config directory paths |
 
 ## Concurrency Model
 

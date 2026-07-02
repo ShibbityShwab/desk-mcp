@@ -48,9 +48,8 @@ pub unsafe fn load_provider(
     // Pragmatic compromise: leak the library handle.
     let lib = Box::leak(Box::new(lib));
 
-    let factory: libloading::Symbol<ProviderFactory> = lib
-        .get(b"create_provider")
-        .map_err(|e| {
+    let factory: libloading::Symbol<ProviderFactory> =
+        lib.get(b"create_provider").map_err(|e| {
             format!(
                 "Plugin {} missing 'create_provider' symbol: {e}",
                 path.display()
@@ -133,9 +132,7 @@ pub fn list_plugins() -> Vec<String> {
             let path = e.path();
             let ext = path.extension().and_then(OsStr::to_str).unwrap_or("");
             if ext == "so" || ext == "dylib" || ext == "dll" {
-                path.file_stem()
-                    .and_then(OsStr::to_str)
-                    .map(String::from)
+                path.file_stem().and_then(OsStr::to_str).map(String::from)
             } else {
                 None
             }

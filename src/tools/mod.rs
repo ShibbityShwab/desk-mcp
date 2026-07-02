@@ -5,6 +5,7 @@
 
 pub mod a11y;
 pub mod browser;
+pub mod browser_cdp;
 pub mod code;
 pub mod computer;
 pub mod search;
@@ -407,7 +408,11 @@ pub fn all_tools() -> Vec<ToolDef> {
 }
 
 /// Dispatch a tool call by name
-pub async fn dispatch(name: &str, args: serde_json::Value, session_id: Option<&str>) -> ToolResponse {
+pub async fn dispatch(
+    name: &str,
+    args: serde_json::Value,
+    session_id: Option<&str>,
+) -> ToolResponse {
     tracing::debug!(tool = name, "dispatching tool");
     let start = std::time::Instant::now();
 
@@ -475,8 +480,12 @@ pub async fn dispatch(name: &str, args: serde_json::Value, session_id: Option<&s
         if let Some(obj) = args.as_object() {
             for (k, v) in obj {
                 match v {
-                    serde_json::Value::String(s) => { params.insert(k.clone(), s.clone()); }
-                    other => { params.insert(k.clone(), other.to_string()); }
+                    serde_json::Value::String(s) => {
+                        params.insert(k.clone(), s.clone());
+                    }
+                    other => {
+                        params.insert(k.clone(), other.to_string());
+                    }
                 }
             }
         }
@@ -532,193 +541,193 @@ pub async fn dispatch(name: &str, args: serde_json::Value, session_id: Option<&s
 
         match name {
             // Computer use
-            "screenshot" | "get_screen_size" | "mouse_move" | "mouse_click" | "mouse_double_click"
-            | "mouse_scroll" | "mouse_drag" | "keyboard_type" | "key_press" | "press_hotkey"
-            | "click_on_text" | "wait_for_text" | "extract_text" | "describe_screen" | "wait"
-            | "clipboard_get" | "clipboard_set" | "env_get" | "shell_run" | "list_windows"
-            | "focus_window" | "get_active_window" | "open_app" | "notify" | "get_window_state"
-            | "type_to_window" => computer::handle(name, args).await,
+            "screenshot" | "get_screen_size" | "mouse_move" | "mouse_click"
+            | "mouse_double_click" | "mouse_scroll" | "mouse_drag" | "keyboard_type"
+            | "key_press" | "press_hotkey" | "click_on_text" | "wait_for_text" | "extract_text"
+            | "describe_screen" | "wait" | "clipboard_get" | "clipboard_set" | "env_get"
+            | "shell_run" | "list_windows" | "focus_window" | "get_active_window" | "open_app"
+            | "notify" | "get_window_state" | "type_to_window" => {
+                computer::handle(name, args).await
+            }
 
-        // Browser use
-        "browser_launch" | "browser_navigate" | "browser_click" | "browser_type"
-        | "browser_screenshot" | "browser_exec_js" | "browser_get_html" | "browser_get_text"
-        | "browser_wait_for" | "browser_tabs" | "browser_new_tab" | "browser_close_tab"
-        | "browser_switch_tab" | "browser_download" | "browser_upload" | "browser_cookies"
-        | "browser_console" => browser::handle(name, args, session_id).await,
-        "browser_refresh" => {
-            let fresh_browsers = crate::discovery::refresh_browsers();
-            crate::discovery::refresh_discovery();
-            let caps = crate::discovery::detect();
-            crate::response::ok(serde_json::json!({
-                "discovered_browsers": fresh_browsers.iter()
-                    .map(|b| serde_json::json!({"binary": b.binary, "port": b.debugging_port, "pid": b.pid}))
-                    .collect::<Vec<_>>(),
-                "browser_automation": caps.browser_automation,
-                "installed_browsers": caps.installed_browsers,
-            }))
-        }
-
-        // Code mode
-        "file_read" | "file_write" | "file_edit" | "grep" | "glob" | "code_run" | "code_lint"
-        | "code_build" => code::handle(name, args).await,
-
-        // Status
-        "server_status" => {
-            let caps = crate::discovery::detect();
-            crate::response::ok(serde_json::json!({
-                "server": crate::SERVER_NAME,
-                "version": crate::SERVER_VERSION,
-                "provider": caps.provider,
-                "display_type": caps.display_type,
-                "desktop": caps.desktop,
-                "screenshot_tool": caps.screenshot_tool,
-                "input_tool": caps.input_tool,
-                "window_tool": caps.window_tool,
-                "available": {
-                    "screenshot": caps.screenshot,
-                    "mouse": caps.mouse,
-                    "keyboard": caps.keyboard,
-                    "windows": caps.windows,
-                    "clipboard": caps.clipboard,
-                    "notify": caps.notify,
-                    "ocr": caps.ocr,
+            // Browser use
+            "browser_launch" | "browser_navigate" | "browser_click" | "browser_type"
+            | "browser_screenshot" | "browser_exec_js" | "browser_get_html"
+            | "browser_get_text" | "browser_wait_for" | "browser_tabs" | "browser_new_tab"
+            | "browser_close_tab" | "browser_switch_tab" | "browser_download"
+            | "browser_upload" | "browser_cookies" | "browser_console" => {
+                browser::handle(name, args, session_id).await
+            }
+            "browser_refresh" => {
+                let fresh_browsers = crate::discovery::refresh_browsers();
+                let caps = crate::discovery::detect();
+                crate::response::ok(serde_json::json!({
+                    "discovered_browsers": fresh_browsers.iter()
+                        .map(|b| serde_json::json!({"binary": b.binary, "port": b.debugging_port, "pid": b.pid}))
+                        .collect::<Vec<_>>(),
                     "browser_automation": caps.browser_automation,
-                },
-                "installed_browsers": caps.installed_browsers.len(),
-                "discovered_browsers": caps.discovered_browsers.iter()
-                    .map(|b| serde_json::json!({"binary": b.binary, "port": b.debugging_port, "pid": b.pid}))
-                    .collect::<Vec<_>>(),
-            }))
-        }
-
-        // Web search & fetch
-        "web_search" => search::handle(&args).await,
-        "web_fetch" => search::handle_fetch(&args).await,
-
-        // Accessibility
-        "find_elements" | "get_element_text" | "click_element" | "get_window_tree" => {
-            a11y::handle(name, args).await
-        }
-
-        // Safety & confirmation
-        "request_confirmation" => {
-            let tool = args
-                .get("tool")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let message = args
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("Action requires confirmation");
-            let params = args
-                .get("params")
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            let id = crate::safety::request(tool, message, &params);
-            crate::response::ok(serde_json::json!({"id": id, "status": "pending"}))
-        }
-        "approve" => {
-            if let Some(id) = args.get("id").and_then(|v| v.as_str()) {
-                match crate::safety::approve(id) {
-                    Ok(()) => {
-                        crate::response::ok(serde_json::json!({"id": id, "status": "approved"}))
-                    }
-                    Err(e) => crate::response::err("NOT_FOUND", &e),
-                }
-            } else {
-                crate::response::err("INVALID_ARGS", "Missing 'id' parameter")
+                    "installed_browsers": caps.installed_browsers,
+                }))
             }
-        }
-        "deny" => {
-            if let Some(id) = args.get("id").and_then(|v| v.as_str()) {
-                let reason = args
-                    .get("reason")
+
+            // Code mode
+            "file_read" | "file_write" | "file_edit" | "grep" | "glob" | "code_run"
+            | "code_lint" | "code_build" => code::handle(name, args).await,
+
+            // Status
+            "server_status" => {
+                let caps = crate::discovery::detect();
+                crate::response::ok(serde_json::json!({
+                    "server": crate::SERVER_NAME,
+                    "version": crate::SERVER_VERSION,
+                    "provider": caps.provider,
+                    "display_type": caps.display_type,
+                    "desktop": caps.desktop,
+                    "screenshot_tool": caps.screenshot_tool,
+                    "input_tool": caps.input_tool,
+                    "window_tool": caps.window_tool,
+                    "available": {
+                        "screenshot": caps.screenshot,
+                        "mouse": caps.mouse,
+                        "keyboard": caps.keyboard,
+                        "windows": caps.windows,
+                        "clipboard": caps.clipboard,
+                        "notify": caps.notify,
+                        "ocr": caps.ocr,
+                        "browser_automation": caps.browser_automation,
+                    },
+                    "installed_browsers": caps.installed_browsers.len(),
+                    "discovered_browsers": caps.discovered_browsers.iter()
+                        .map(|b| serde_json::json!({"binary": b.binary, "port": b.debugging_port, "pid": b.pid}))
+                        .collect::<Vec<_>>(),
+                }))
+            }
+
+            // Web search & fetch
+            "web_search" => search::handle(&args).await,
+            "web_fetch" => search::handle_fetch(&args).await,
+
+            // Accessibility
+            "find_elements" | "get_element_text" | "click_element" | "get_window_tree" => {
+                a11y::handle(name, args).await
+            }
+
+            // Safety & confirmation
+            "request_confirmation" => {
+                let tool = args
+                    .get("tool")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("Denied by user");
-                match crate::safety::deny(id, reason) {
-                    Ok(()) => {
-                        crate::response::ok(serde_json::json!({"id": id, "status": "denied"}))
-                    }
-                    Err(e) => crate::response::err("NOT_FOUND", &e),
-                }
-            } else {
-                crate::response::err("INVALID_ARGS", "Missing 'id' parameter")
+                    .unwrap_or("unknown");
+                let message = args
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Action requires confirmation");
+                let params = args
+                    .get("params")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let id = crate::safety::request(tool, message, &params);
+                crate::response::ok(serde_json::json!({"id": id, "status": "pending"}))
             }
-        }
-        "list_pending" => {
-            let pending = crate::safety::list_pending();
-            crate::response::ok(serde_json::json!({
-                "pending": pending.iter().map(|p| serde_json::json!({
-                    "id": p.id,
-                    "tool": p.tool,
-                    "message": p.message,
-                    "params": p.params,
-                    "created": p.created
-                })).collect::<Vec<_>>()
-            }))
-        }
+            "approve" => {
+                if let Some(id) = args.get("id").and_then(|v| v.as_str()) {
+                    match crate::safety::approve(id) {
+                        Ok(()) => {
+                            crate::response::ok(serde_json::json!({"id": id, "status": "approved"}))
+                        }
+                        Err(e) => crate::response::err("NOT_FOUND", &e),
+                    }
+                } else {
+                    crate::response::err("INVALID_ARGS", "Missing 'id' parameter")
+                }
+            }
+            "deny" => {
+                if let Some(id) = args.get("id").and_then(|v| v.as_str()) {
+                    let reason = args
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Denied by user");
+                    match crate::safety::deny(id, reason) {
+                        Ok(()) => {
+                            crate::response::ok(serde_json::json!({"id": id, "status": "denied"}))
+                        }
+                        Err(e) => crate::response::err("NOT_FOUND", &e),
+                    }
+                } else {
+                    crate::response::err("INVALID_ARGS", "Missing 'id' parameter")
+                }
+            }
+            "list_pending" => {
+                let pending = crate::safety::list_pending();
+                crate::response::ok(serde_json::json!({
+                    "pending": pending.iter().map(|p| serde_json::json!({
+                        "id": p.id,
+                        "tool": p.tool,
+                        "message": p.message,
+                        "params": p.params,
+                        "created": p.created
+                    })).collect::<Vec<_>>()
+                }))
+            }
 
-        _ => {
-            // Suggest closest matching tool names
-            let tools = all_tools();
-            let name_lower = name.to_lowercase();
-            let mut scored: Vec<(&str, usize)> = tools
-                .iter()
-                .map(|t| {
-                    let t_name = t.name.as_str();
-                    let score = if t_name == name_lower {
-                        0 // exact match after lowercasing
-                    } else if t_name.contains(&name_lower) || name_lower.contains(t_name) {
-                        1
-                    } else {
-                        // Levenshtein-ish: count common prefix chars
-                        t_name
-                            .chars()
-                            .zip(name_lower.chars())
-                            .take_while(|(a, b)| a == b)
-                            .count()
-                    };
-                    (t_name, score)
-                })
-                .collect();
-            scored.sort_by_key(|(_, s)| std::cmp::Reverse(*s));
-            let suggestions: Vec<&str> = scored
-                .iter()
-                .filter(|(_, s)| *s > 0)
-                .take(3)
-                .map(|(n, _)| *n)
-                .collect();
+            _ => {
+                // Suggest closest matching tool names
+                let tools = all_tools();
+                let name_lower = name.to_lowercase();
+                let mut scored: Vec<(&str, usize)> = tools
+                    .iter()
+                    .map(|t| {
+                        let t_name = t.name.as_str();
+                        let score = if t_name == name_lower {
+                            0 // exact match after lowercasing
+                        } else if t_name.contains(&name_lower) || name_lower.contains(t_name) {
+                            1
+                        } else {
+                            // Levenshtein-ish: count common prefix chars
+                            t_name
+                                .chars()
+                                .zip(name_lower.chars())
+                                .take_while(|(a, b)| a == b)
+                                .count()
+                        };
+                        (t_name, score)
+                    })
+                    .collect();
+                scored.sort_by_key(|(_, s)| std::cmp::Reverse(*s));
+                let suggestions: Vec<&str> = scored
+                    .iter()
+                    .filter(|(_, s)| *s > 0)
+                    .take(3)
+                    .map(|(n, _)| *n)
+                    .collect();
 
-            let msg = if suggestions.is_empty() {
-                format!("No tool named '{name}'. Use tools/list to see available tools.")
-            } else {
-                format!(
+                let msg = if suggestions.is_empty() {
+                    format!("No tool named '{name}'. Use tools/list to see available tools.")
+                } else {
+                    format!(
                     "No tool named '{name}'. Did you mean: {}? Use tools/list to see all {} tools.",
                     suggestions.join(", "),
                     tools.len()
                 )
-            };
-            crate::response::err("UNKNOWN_TOOL", &msg)
+                };
+                crate::response::err("UNKNOWN_TOOL", &msg)
+            }
         }
-    }};
+    };
 
     // Wrap with a 60-second hard deadline so a stuck handler never
     // blocks the server permanently.
-    let result = match tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        dispatch_future,
-    )
-    .await
-    {
-        Ok(tool_response) => tool_response,
-        Err(_elapsed) => {
-            tracing::error!(tool = name, "tool handler timed out after 60s");
-            crate::response::err(
-                "TIMEOUT",
-                &format!("Tool '{name}' timed out after 60 seconds"),
-            )
-        }
-    };
+    let result =
+        match tokio::time::timeout(std::time::Duration::from_secs(60), dispatch_future).await {
+            Ok(tool_response) => tool_response,
+            Err(_elapsed) => {
+                tracing::error!(tool = name, "tool handler timed out after 60s");
+                crate::response::err(
+                    "TIMEOUT",
+                    &format!("Tool '{name}' timed out after 60 seconds"),
+                )
+            }
+        };
 
     // Audit log
     let ok = result.ok;

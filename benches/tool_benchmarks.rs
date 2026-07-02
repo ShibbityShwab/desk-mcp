@@ -261,8 +261,21 @@ fn bench_tool_dispatch(c: &mut Criterion) {
 
 fn bench_ocr_parse(c: &mut Criterion) {
     let items: Vec<desk_mcp::ocr::OcrItem> = [
-        "benchmark", "text", "parsing", "routine", "speed", "test", "performance",
-        "analysis", "result", "output", "input", "sample", "value", "data", "check",
+        "benchmark",
+        "text",
+        "parsing",
+        "routine",
+        "speed",
+        "test",
+        "performance",
+        "analysis",
+        "result",
+        "output",
+        "input",
+        "sample",
+        "value",
+        "data",
+        "check",
     ]
     .iter()
     .map(|t| desk_mcp::ocr::OcrItem {
@@ -338,7 +351,10 @@ fn bench_audit_recipes(c: &mut Criterion) {
             let mut m = serde_json::Map::new();
             for (k, v) in obj {
                 if k == "text" {
-                    m.insert(k.clone(), serde_json::json!({"text_len": v.as_str().unwrap().len()}));
+                    m.insert(
+                        k.clone(),
+                        serde_json::json!({"text_len": v.as_str().unwrap().len()}),
+                    );
                 } else {
                     m.insert(k.clone(), v.clone());
                 }
@@ -359,7 +375,8 @@ fn bench_audit_recipes(c: &mut Criterion) {
         params.insert("user".into(), "benchmark-bot".into());
 
         b.iter(|| {
-            let result = desk_mcp::recipes::substitute_params(black_box(&template), black_box(&params));
+            let result =
+                desk_mcp::recipes::substitute_params(black_box(&template), black_box(&params));
             black_box(result);
         })
     });

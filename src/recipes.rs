@@ -177,10 +177,8 @@ pub fn substitute_params(
             serde_json::Value::Object(out)
         }
         serde_json::Value::Array(arr) => {
-            let out: Vec<serde_json::Value> = arr
-                .iter()
-                .map(|v| substitute_params(v, params))
-                .collect();
+            let out: Vec<serde_json::Value> =
+                arr.iter().map(|v| substitute_params(v, params)).collect();
             serde_json::Value::Array(out)
         }
         other => other.clone(),
@@ -197,7 +195,10 @@ pub fn recipe_input_schema(recipe: &Recipe) -> serde_json::Value {
 
     for (name, param) in &recipe.parameters {
         let mut prop = serde_json::Map::new();
-        prop.insert("type".into(), serde_json::Value::String(param.param_type.clone()));
+        prop.insert(
+            "type".into(),
+            serde_json::Value::String(param.param_type.clone()),
+        );
         if let Some(ref default) = param.default {
             prop.insert("default".into(), default.clone());
         }
@@ -209,10 +210,7 @@ pub fn recipe_input_schema(recipe: &Recipe) -> serde_json::Value {
 
     let mut schema = serde_json::Map::new();
     schema.insert("type".into(), serde_json::Value::String("object".into()));
-    schema.insert(
-        "properties".into(),
-        serde_json::Value::Object(properties),
-    );
+    schema.insert("properties".into(), serde_json::Value::Object(properties));
     if !required.is_empty() {
         schema.insert("required".into(), serde_json::Value::Array(required));
     }

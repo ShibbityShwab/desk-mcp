@@ -1,5 +1,6 @@
 //! Computer use provider trait and factory.
 
+pub mod atspi_backend;
 pub mod browser_extension;
 pub mod headless;
 pub mod kde_wayland;

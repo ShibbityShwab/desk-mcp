@@ -133,7 +133,10 @@ pub async fn resolve_and_act(action: Action, target: Target) -> Result<ActionRes
 /// Search the accessibility element tree for the given target.
 fn find_in_tree(state: &WindowState, target: &Target) -> Option<ResolvedElement> {
     match target {
-        Target::ByRole { role, name_contains } => {
+        Target::ByRole {
+            role,
+            name_contains,
+        } => {
             let role_lower = role.to_lowercase();
             let name_filter = name_contains.as_ref().map(|n| n.to_lowercase());
             for el in &state.elements {
@@ -183,7 +186,11 @@ fn find_in_tree(state: &WindowState, target: &Target) -> Option<ResolvedElement>
             let text_lower = text.to_lowercase();
             for el in &state.elements {
                 let name_lower = el.name.to_lowercase();
-                let value_lower = el.value.as_ref().map(|v| v.to_lowercase()).unwrap_or_default();
+                let value_lower = el
+                    .value
+                    .as_ref()
+                    .map(|v| v.to_lowercase())
+                    .unwrap_or_default();
                 if name_lower.contains(&text_lower) || value_lower.contains(&text_lower) {
                     return Some(ResolvedElement {
                         bounds: el.bounds.as_ref().map(|b| Rect {
@@ -250,7 +257,10 @@ fn act_on_element(
     tier: ResolutionTier,
     start: Instant,
 ) -> Result<ActionResult, String> {
-    let center = el.bounds.as_ref().map(|b| (b.x + b.width / 2, b.y + b.height / 2));
+    let center = el
+        .bounds
+        .as_ref()
+        .map(|b| (b.x + b.width / 2, b.y + b.height / 2));
     let (cx, cy) = center.unwrap_or((0, 0));
 
     match action {
@@ -326,7 +336,13 @@ fn active_window_is_browser() -> Result<bool, String> {
     // Also check by app name (e.g. "chrome", "firefox", "chromium")
     let app_lower = win.app.to_lowercase();
     let browser_apps = [
-        "chrome", "chromium", "firefox", "brave", "edge", "opera", "vivaldi",
+        "chrome",
+        "chromium",
+        "firefox",
+        "brave",
+        "edge",
+        "opera",
+        "vivaldi",
         "google-chrome",
     ];
     for name in &browser_apps {
@@ -393,7 +409,7 @@ async fn resolve_via_cdp(target: &Target) -> Result<ResolvedElement, String> {
                         format!("#{id}")
                     } else {
                         // Use a text-based selector fallback
-                        format!("{tag}")
+                        tag.to_string()
                     };
                     Ok(ResolvedElement {
                         bounds: None,
@@ -406,7 +422,10 @@ async fn resolve_via_cdp(target: &Target) -> Result<ResolvedElement, String> {
                 _ => Err(format!("CDP: text '{text}' not found in DOM")),
             }
         }
-        Target::ByRole { role, name_contains } => {
+        Target::ByRole {
+            role,
+            name_contains,
+        } => {
             let role_sel = format!("[role=\"{role}\"]");
             // Try selecting by role first
             if let Ok(_el) = page.find_element(&role_sel).await {
@@ -512,9 +531,7 @@ async fn act_via_cdp(
                 .map_err(|e| format!("CDP key_press failed: {e}"))?;
         }
         Action::Scroll { dx, dy } => {
-            let script = format!(
-                "window.scrollBy({{left: {dx}, top: {dy}, behavior: 'smooth'}})",
-            );
+            let script = format!("window.scrollBy({{left: {dx}, top: {dy}, behavior: 'smooth'}})",);
             page.evaluate(script.as_str())
                 .await
                 .map_err(|e| format!("CDP scroll failed: {e}"))?;
@@ -554,12 +571,18 @@ fn map_key_props(key: &str) -> (String, u32, u32) {
         "pageup" => ("PageUp", 33, 33),
         "pagedown" => ("PageDown", 34, 34),
         "insert" => ("Insert", 45, 45),
-        "f1" => ("F1", 112, 112), "f2" => ("F2", 113, 113),
-        "f3" => ("F3", 114, 114), "f4" => ("F4", 115, 115),
-        "f5" => ("F5", 116, 116), "f6" => ("F6", 117, 117),
-        "f7" => ("F7", 118, 118), "f8" => ("F8", 119, 119),
-        "f9" => ("F9", 120, 120), "f10" => ("F10", 121, 121),
-        "f11" => ("F11", 122, 122), "f12" => ("F12", 123, 123),
+        "f1" => ("F1", 112, 112),
+        "f2" => ("F2", 113, 113),
+        "f3" => ("F3", 114, 114),
+        "f4" => ("F4", 115, 115),
+        "f5" => ("F5", 116, 116),
+        "f6" => ("F6", 117, 117),
+        "f7" => ("F7", 118, 118),
+        "f8" => ("F8", 119, 119),
+        "f9" => ("F9", 120, 120),
+        "f10" => ("F10", 121, 121),
+        "f11" => ("F11", 122, 122),
+        "f12" => ("F12", 123, 123),
         _ if key.len() == 1 => {
             let ch = key.chars().next().unwrap();
             let code = ch.to_uppercase().next().unwrap() as u32;
@@ -610,7 +633,10 @@ fn resolve_via_vision(
             })
         }
         // For role/name/selector, look in clickable regions
-        Target::ByRole { role, name_contains } => {
+        Target::ByRole {
+            role,
+            name_contains,
+        } => {
             let role_lower = role.to_lowercase();
             for region in &state.clickable_regions {
                 let region_text = region.text.to_lowercase();
@@ -833,7 +859,7 @@ fn parse_tool_args(name: &str, args: &serde_json::Value) -> Result<(Action, Targ
         }
         "click_on_text" => {
             let text = args["text"].as_str().unwrap_or("").to_string();
-            return Ok((
+            Ok((
                 Action::Click {
                     button: args
                         .get("button")
@@ -842,7 +868,7 @@ fn parse_tool_args(name: &str, args: &serde_json::Value) -> Result<(Action, Targ
                         .to_string(),
                 },
                 Target::ByText { text },
-            ));
+            ))
         }
         "browser_click" => {
             // Check for explicit fields
@@ -877,7 +903,12 @@ fn parse_tool_args(name: &str, args: &serde_json::Value) -> Result<(Action, Targ
                 ));
             }
             if let Some(target) = infer_target_from_args(args) {
-                return Ok((Action::Click { button: "left".to_string() }, target));
+                return Ok((
+                    Action::Click {
+                        button: "left".to_string(),
+                    },
+                    target,
+                ));
             }
             Err("browser_click: provide selector, text, coords, or target block".into())
         }
@@ -903,7 +934,10 @@ fn parse_tool_args(name: &str, args: &serde_json::Value) -> Result<(Action, Targ
 /// Parse a target object from JSON.
 fn parse_target(obj: &serde_json::Value) -> Result<Target, String> {
     if let Some(role) = obj.get("role").and_then(|v| v.as_str()) {
-        let name_contains = obj.get("name_contains").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let name_contains = obj
+            .get("name_contains")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         return Ok(Target::ByRole {
             role: role.to_string(),
             name_contains,

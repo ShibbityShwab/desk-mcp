@@ -69,26 +69,9 @@ pub fn refresh_browsers() -> Vec<BrowserInfo> {
         .collect()
 }
 
-/// Force a fresh re-scan of the environment. Useful after installing
-/// a dependency while the server is running.
-pub fn refresh_discovery() {
-    // OnceLock doesn't support clearing after init in stable Rust.
-    // We use a new OnceLock via an atomic pointer swap.
-    // This is safe because:
-    // 1. desk-mcp is single-binary, no hot reload
-    // 2. This is only called from MCP tool dispatch (sequential within a request)
-    use std::sync::atomic::{AtomicPtr, Ordering};
-    static PTR: AtomicPtr<OnceLock<Capabilities>> =
-        AtomicPtr::new(&DETECTED as *const OnceLock<Capabilities> as *mut OnceLock<Capabilities>);
-    let new_lock = Box::new(OnceLock::new());
-    let _ = new_lock.set(detect_impl());
-    let new_ptr = Box::into_raw(new_lock);
-    let old_ptr = PTR.swap(new_ptr, Ordering::Release);
-    // SAFETY: we leak the old OnceLock — negligible memory cost
-    unsafe {
-        let _ = Box::from_raw(old_ptr);
-    }
-}
+// refresh_discovery removed — OnceLock atomic swap was UB.
+// Use refresh_browsers() for runtime browser re-scanning.
+// Environment capabilities (display type, desktop) do not change at runtime.
 
 fn detect_impl() -> Capabilities {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());

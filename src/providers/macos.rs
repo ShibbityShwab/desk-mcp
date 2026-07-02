@@ -44,7 +44,9 @@ impl ComputerProvider for MacOSProvider {
             //   let (x, y, w, h) = if let Some(region) = region { ... } else { (0, 0, ...) };
             //   let cropped = image.cropped(CGRect::new(...))?;
             //   let png = image_to_png(cropped)?;
-            Err(anyhow::anyhow!("macOS native screenshot not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native screenshot not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -59,7 +61,9 @@ impl ComputerProvider for MacOSProvider {
             //   let main = CGDisplay::main();
             //   let bounds = main.bounds();
             //   Ok(ScreenSize { width: bounds.size.width as u32, height: bounds.size.height as u32 })
-            Err(anyhow::anyhow!("macOS native get_screen_size not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native get_screen_size not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -80,7 +84,9 @@ impl ComputerProvider for MacOSProvider {
             //   )?;
             //   event.post(kCGHIDEventTap)?;
             // For smooth: CGEventSetIntegerValueField(event, kCGMouseEventDeltaX, dx)
-            Err(anyhow::anyhow!("macOS native mouse_move not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native mouse_move not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -102,7 +108,9 @@ impl ComputerProvider for MacOSProvider {
             //   let down = CGEvent::new_mouse_event(kCGEventLeftMouseDown, point, button)?;
             //   let up = CGEvent::new_mouse_event(kCGEventLeftMouseUp, point, button)?;
             //   for _ in 0..clicks { down.post(kCGHIDEventTap)?; up.post(kCGHIDEventTap)?; }
-            Err(anyhow::anyhow!("macOS native mouse_click not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native mouse_click not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -122,7 +130,9 @@ impl ComputerProvider for MacOSProvider {
             //   )?;
             //   event.post(kCGHIDEventTap)?;
             //   If x/y provided: move mouse first with CGEventCreateMouseEvent
-            Err(anyhow::anyhow!("macOS native mouse_scroll not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native mouse_scroll not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -144,7 +154,9 @@ impl ComputerProvider for MacOSProvider {
             // TODO: CGEventCreateMouseEvent for left_down → move → left_up
             //   Move to (x1, y1), press button, interpolate points, release at (x2, y2)
             //   Use CGEventPost for each step; thread::sleep for duration
-            Err(anyhow::anyhow!("macOS native mouse_drag not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native mouse_drag not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -164,7 +176,9 @@ impl ComputerProvider for MacOSProvider {
             //   thread::sleep(delay);
             //   let event = CGEvent::new_keyboard_event(keycode, false)?; // key up
             //   event.post(kCGHIDEventTap)?;
-            Err(anyhow::anyhow!("macOS native keyboard_type not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native keyboard_type not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -179,7 +193,9 @@ impl ComputerProvider for MacOSProvider {
             //   Parse combo like "ctrl+c", "cmd+shift+t"
             //   CGEventSetFlags(event, kCGEventFlagMaskCommand | ...);
             //   Post key down + key up
-            Err(anyhow::anyhow!("macOS native key_press not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native key_press not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -196,7 +212,9 @@ impl ComputerProvider for MacOSProvider {
             //   let pb = NSPasteboard::generalPasteboard();
             //   pb.stringForType(NSPasteboardTypeString)?
             //   Or use arboard (already in deps, works on macOS)
-            Err(anyhow::anyhow!("macOS native clipboard_get not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native clipboard_get not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -208,7 +226,9 @@ impl ComputerProvider for MacOSProvider {
     fn clipboard_set(&self, _text: &str) -> Result<()> {
         if cfg!(target_os = "macos") {
             // TODO: NSPasteboard.general.clearContents() + setString(_:forType:)
-            Err(anyhow::anyhow!("macOS native clipboard_set not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native clipboard_set not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -222,7 +242,9 @@ impl ComputerProvider for MacOSProvider {
     fn shell_run(&self, _command: &str, _timeout_secs: u64) -> Result<ShellResult> {
         if cfg!(target_os = "macos") {
             // TODO: std::process::Command (cross-platform, but gate behind macOS for consistency)
-            Err(anyhow::anyhow!("macOS native shell_run not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native shell_run not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -238,7 +260,9 @@ impl ComputerProvider for MacOSProvider {
             // TODO: CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
             //   Parse the CFArray of dictionaries: kCGWindowName, kCGWindowOwnerName, ...
             //   Map to WindowInfo struct
-            Err(anyhow::anyhow!("macOS native list_windows not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native list_windows not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -251,7 +275,9 @@ impl ComputerProvider for MacOSProvider {
         if cfg!(target_os = "macos") {
             // TODO: list_windows() → filter by title → AXUIElementPerformAction(AXRaiseAction)
             //   Then set frontmost via NSRunningApplication
-            Err(anyhow::anyhow!("macOS native focus_window not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native focus_window not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -264,7 +290,9 @@ impl ComputerProvider for MacOSProvider {
         if cfg!(target_os = "macos") {
             // TODO: NSWorkspace.shared.frontmostApplication
             //   + CGWindowListCopyWindowInfo → filter for active app's windows
-            Err(anyhow::anyhow!("macOS native get_active_window not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native get_active_window not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",
@@ -312,7 +340,9 @@ impl ComputerProvider for MacOSProvider {
             //     AXUIElementCopyAttributeValue(el, kAXTitleAttribute) → name
             //     AXUIElementCopyAttributeValue(el, kAXChildrenAttribute) → children
             //   Walk recursively; emit UiElement for each node
-            Err(anyhow::anyhow!("macOS native get_window_state not yet implemented"))
+            Err(anyhow::anyhow!(
+                "macOS native get_window_state not yet implemented"
+            ))
         } else {
             Err(anyhow::anyhow!(
                 "macOS provider requires macOS. Running on {}",

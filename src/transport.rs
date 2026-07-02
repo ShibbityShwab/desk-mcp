@@ -8,11 +8,11 @@
 //! map the Bearer token → deterministic session id; stdio uses a single
 //! `"stdio-session"` id.
 
+use crate::session::{self, SessionCapabilities};
 use axum::{routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::net::SocketAddr;
-use crate::session::{self, SessionCapabilities};
 
 // ── JSON-RPC 2.0 types ────────────────────────────────────────────────
 
@@ -227,8 +227,14 @@ pub async fn run_http_server(addr: SocketAddr) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/health", axum::routing::get(health_handler))
         .route("/mcp", post(mcp_handler))
-        .route("/dashboard", axum::routing::get(crate::dashboard::dashboard_handler))
-        .route("/dashboard/stats", axum::routing::get(crate::dashboard::stats_handler))
+        .route(
+            "/dashboard",
+            axum::routing::get(crate::dashboard::dashboard_handler),
+        )
+        .route(
+            "/dashboard/stats",
+            axum::routing::get(crate::dashboard::stats_handler),
+        )
         .layer(CorsLayer::permissive());
 
     tracing::info!(

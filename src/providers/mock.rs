@@ -36,6 +36,12 @@ pub struct MockProvider {
     pub screen_size: ScreenSize,
 }
 
+impl Default for MockProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MockProvider {
     // ── Constructor ───────────────────────────────────────────────
 
@@ -210,12 +216,9 @@ impl ComputerProvider for MockProvider {
                 // Simple crop: delegate to the image crate if available, otherwise
                 // return the full image and let callers handle it.
                 // We attempt to crop with the `image` crate.
-                let img = image::load_from_memory(&full)
-                    .unwrap_or_else(|_| {
-                        image::DynamicImage::new_rgba8(
-                            self.screen_size.width, self.screen_size.height,
-                        )
-                    });
+                let img = image::load_from_memory(&full).unwrap_or_else(|_| {
+                    image::DynamicImage::new_rgba8(self.screen_size.width, self.screen_size.height)
+                });
                 let cropped = img.crop_imm(
                     x.max(0) as u32,
                     y.max(0) as u32,
@@ -247,13 +250,7 @@ impl ComputerProvider for MockProvider {
         Ok(())
     }
 
-    fn mouse_click(
-        &self,
-        button: &str,
-        x: Option<i32>,
-        y: Option<i32>,
-        clicks: u32,
-    ) -> Result<()> {
+    fn mouse_click(&self, button: &str, x: Option<i32>, y: Option<i32>, clicks: u32) -> Result<()> {
         let pos = match (x, y) {
             (Some(cx), Some(cy)) => {
                 *self.cursor.lock().unwrap() = (cx, cy);
@@ -401,10 +398,7 @@ impl ComputerProvider for MockProvider {
 
     fn get_active_window(&self) -> Result<Option<WindowInfo>> {
         let active_id = self.active_window.lock().unwrap().clone();
-        self.record(
-            "get_active_window",
-            json!({ "active_id": active_id }),
-        );
+        self.record("get_active_window", json!({ "active_id": active_id }));
 
         match active_id {
             Some(ref id) => {
@@ -570,17 +564,16 @@ mod tests {
 
     #[test]
     fn get_active_window_returns_focused() {
-        let p = MockProvider::new()
-            .with_window(
-                "App",
-                "test-app",
-                WindowGeometry {
-                    x: 0,
-                    y: 0,
-                    width: 100,
-                    height: 100,
-                },
-            );
+        let p = MockProvider::new().with_window(
+            "App",
+            "test-app",
+            WindowGeometry {
+                x: 0,
+                y: 0,
+                width: 100,
+                height: 100,
+            },
+        );
         p.focus_window("App").unwrap();
         let active = p.get_active_window().unwrap();
         assert!(active.is_some());
@@ -614,7 +607,10 @@ mod tests {
         let data = p.screenshot(None).unwrap();
         assert!(!data.is_empty());
         // Starts with PNG signature.
-        assert_eq!(&data[0..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        assert_eq!(
+            &data[0..8],
+            &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        );
     }
 
     #[test]
