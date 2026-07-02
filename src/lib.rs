@@ -5,7 +5,7 @@
 //!
 //! ## Architecture
 //! - `providers/` — Pluggable desktop backends (KDE Wayland, headless, etc.)
-//! - `tools/` — 63 MCP tools across computer use, browser use, code mode, a11y, safety, and search
+//! - `tools/` — 61 MCP tools across computer use, browser use, code mode, a11y, safety, and recipes
 //! - `safety.rs` — Confirmation, rate limiting, action logging
 //! - `vision.rs` — Screen state analysis, clickable region detection
 //! - `discovery.rs` — Environment detection (cached for performance)

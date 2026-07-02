@@ -1,4 +1,4 @@
-//! Tool registry — defines all 63 MCP tools with JSON schemas.
+//! Tool registry — defines all 61 MCP tools with JSON schemas.
 //!
 //! Each tool is registered with a name, description, and JSON Schema input spec.
 //! The `dispatch` function routes tool calls to the appropriate handler.
@@ -8,7 +8,6 @@ pub mod browser;
 pub mod browser_cdp;
 pub mod code;
 pub mod computer;
-pub mod search;
 
 use crate::response::ToolResponse;
 use serde::Serialize;
@@ -26,7 +25,7 @@ pub struct ToolDef {
     pub input_schema: serde_json::Value,
 }
 
-/// Generate the full tool list (63 tools)
+/// Generate the full tool list (61 tools)
 pub fn all_tools() -> Vec<ToolDef> {
     let mut tools = Vec::new();
 
@@ -362,13 +361,6 @@ pub fn all_tools() -> Vec<ToolDef> {
         r#"{"type":"object","properties":{}}"#,
     );
 
-    // ═══════════════ WEB SEARCH (1 tool) ═══════════════
-    t("web_search", "Search the web using DuckDuckGo (no API key needed). Returns title, URL, and snippet for each result.",
-      r#"{"type":"object","required":["query"],"properties":{"query":{"type":"string","description":"Search query"},"max_results":{"type":"integer","default":5,"minimum":1,"maximum":10}}}"#);
-
-    t("web_fetch", "Fetch the content of a URL. Returns text content (HTML stripped) or raw HTML. Use after web_search to read a result page.",
-      r#"{"type":"object","required":["url"],"properties":{"url":{"type":"string","description":"Absolute URL to fetch"},"format":{"type":"string","enum":["text","html"],"default":"text","description":"text=strip HTML tags, html=raw HTML"},"max_bytes":{"type":"integer","default":500000,"minimum":1000,"maximum":5000000,"description":"Max bytes to return"}}}"#);
-
     // ═══════════════ SAFETY & CONFIRMATION (4 tools) ═══════════════
     t(
         "request_confirmation",
@@ -602,10 +594,6 @@ pub async fn dispatch(
                         .collect::<Vec<_>>(),
                 }))
             }
-
-            // Web search & fetch
-            "web_search" => search::handle(&args).await,
-            "web_fetch" => search::handle_fetch(&args).await,
 
             // Accessibility
             "find_elements" | "get_element_text" | "click_element" | "get_window_tree" => {

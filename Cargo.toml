@@ -39,7 +39,6 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 libloading = "0.8"
 dashmap = "6"
-urlencoding = "2"
 reqwest = { version = "0.12", default-features = true, features = ["blocking"] }
 
 # OpenTelemetry OTLP exporter (enabled via DESKMCP_OTLP=1)

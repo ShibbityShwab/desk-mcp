@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - leptess dependency (replaced by tesseract CLI)
 - notify-rust dependency (replaced by notify-send CLI)
+- `web_search` and `web_fetch` tools — model's native web search handles this; DuckDuckGo scraping was fragile and redundant
+- `urlencoding` dependency (only used by web search)
+- Dead global rate limiter code in `safety.rs` and `session.rs` (replaced by session-based rate limiting)
 
 ### Fixed
 - Clipboard crash on Wayland (arboard now fails silently)

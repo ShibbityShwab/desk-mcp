@@ -65,9 +65,6 @@ const ALL_TOOLS: &[&str] = &[
     "get_window_tree",
     // Status
     "server_status",
-    // Web search
-    "web_search",
-    "web_fetch",
     // Safety & confirmation
     "request_confirmation",
     "approve",
