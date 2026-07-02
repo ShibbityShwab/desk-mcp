@@ -15,7 +15,7 @@ use serde_json;
 use crate::providers::{UiElement, WindowInfo, WindowState};
 
 /// Enable AT-SPI screen reader mode so all apps expose their accessibility trees.
-fn enable_accessibility() -> Result<()> {
+pub(crate) fn enable_accessibility_for_atspi() -> Result<()> {
     let output = Command::new("dbus-send")
         .args([
             "--session",
@@ -39,7 +39,7 @@ fn enable_accessibility() -> Result<()> {
 /// Walk the AT-SPI tree for the active window and collect all meaningful UI elements.
 /// Uses Python/pyatspi via subprocess for reliable bus discovery.
 pub fn get_window_state(active: &WindowInfo) -> Result<WindowState> {
-    let _ = enable_accessibility();
+    let _ = enable_accessibility_for_atspi();
 
     let pid = active
         .pid

@@ -1,24 +1,25 @@
 //! Windows provider — Win32 + UI Automation APIs.
 //!
-//! This is a STUB. Full implementation requires Windows-native compilation.
-//! Compiles on Linux via cfg-gated empty impls that return friendly errors.
+//! **Status: STUB** — compiles on all platforms via `cfg!(target_os)` runtime
+//! checks that return `McpError::NotAvailable` with platform-specific guidance.
 //!
-//! Planned Windows-native dependencies (not yet added to Cargo.toml):
-//!   - `windows` crate (official Microsoft bindings)
-//!   - `winapi` or `windows-sys` (direct FFI alternative)
+//! ## Implementation roadmap
 //!
-//! Usage when Windows support lands:
-//!   ```ignore
-//!   // In Cargo.toml:
-//!   [target.'cfg(target_os = "windows")'.dependencies]
-//!   windows = { version = "0.58", features = [
-//!       "Win32_Graphics_Gdi",
-//!       "Win32_UI_Input_KeyboardAndMouse",
-//!       "Win32_UI_WindowsAndMessaging",
-//!       "Win32_UI_Accessibility",
-//!       "Win32_System_Com",
-//!   ]}
-//!   ```
+//! 1. Add to Cargo.toml:
+//!    ```toml
+//!    [target.'cfg(target_os = "windows")'.dependencies]
+//!    windows = { version = "0.58", features = [
+//!        "Win32_Graphics_Gdi",
+//!        "Win32_UI_Input_KeyboardAndMouse",
+//!        "Win32_UI_WindowsAndMessaging",
+//!        "Win32_UI_Accessibility",
+//!        "Win32_System_Com",
+//!    ]}
+//!    ```
+//! 2. Replace each `cfg!()` block in this file with the real implementation.
+//!    The TODO comments document the exact API calls needed per method.
+//! 3. Test on Windows 10+ — UI Automation requires the `uiautomationcore`
+//!    DLL (present on all modern Windows installs).
 
 use super::*;
 use anyhow::Result;

@@ -17,7 +17,6 @@ use dashmap::DashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::RwLock;
 
 // ── SessionId ────────────────────────────────────────────────────────────
@@ -50,42 +49,6 @@ impl Default for SessionCapabilities {
     }
 }
 
-// ── RateBucket (per-session token bucket) ────────────────────────────────
-
-const MAX_PER_MINUTE: u32 = 30;
-const BURST: u32 = 5;
-
-#[derive(Debug, Clone)]
-pub(crate) struct RateBucket {
-    tokens: f64,
-    last_refill: Instant,
-}
-
-impl RateBucket {
-    fn new() -> Self {
-        Self {
-            tokens: BURST as f64,
-            last_refill: Instant::now(),
-        }
-    }
-
-    /// Returns `true` if an action is allowed right now (consumes 1 token).
-    pub fn check(&mut self) -> bool {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last_refill).as_secs_f64();
-        // Refill at 30/min = 0.5 tokens/sec
-        self.tokens = (self.tokens + elapsed * (MAX_PER_MINUTE as f64 / 60.0)).min(BURST as f64);
-        self.last_refill = now;
-
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
-            true
-        } else {
-            false
-        }
-    }
-}
-
 // ── AgentSession ─────────────────────────────────────────────────────────
 
 /// Per-agent isolated state.
@@ -106,8 +69,6 @@ pub struct AgentSession {
     pub(crate) browser_page: RwLock<Option<chromiumoxide::Page>>,
     /// Number of tool invocations through this session.
     pub action_count: RwLock<u32>,
-    /// Per-session token bucket (30/min, burst 5).
-    pub(crate) rate_bucket: RwLock<RateBucket>,
     /// Pending confirmations owned by this session.
     pub pending_confirmations: RwLock<Vec<Confirmation>>,
     /// Capability flags.
@@ -126,7 +87,6 @@ impl AgentSession {
             focused_window: RwLock::new(None),
             browser_page: RwLock::new(None),
             action_count: RwLock::new(0),
-            rate_bucket: RwLock::new(RateBucket::new()),
             pending_confirmations: RwLock::new(Vec::new()),
             capabilities,
         }

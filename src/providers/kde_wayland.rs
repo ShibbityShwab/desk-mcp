@@ -1267,6 +1267,6 @@ impl ComputerProvider for KdeWaylandProvider {
 
     fn get_window_state(&self) -> Result<WindowState> {
         let active = self.get_active_window()?.context("no active window")?;
-        crate::a11y::get_window_state(&active)
+        crate::providers::atspi_backend::get_window_state_via_atspi(&active)
     }
 }

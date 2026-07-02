@@ -51,7 +51,7 @@ arboard = "3"
 enigo = { version = "0.3", default-features = false, features = ["x11rb"] }
 wdotool-core = "0.5"
 zbus = { version = "5", features = ["tokio"] }
-atspi = { version = "0.11", features = ["tokio"] }
+atspi = { version = "0.11", features = ["tokio", "client-accessories"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

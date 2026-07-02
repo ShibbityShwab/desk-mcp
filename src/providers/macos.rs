@@ -1,26 +1,21 @@
 //! macOS provider — CoreGraphics + Accessibility APIs.
 //!
-//! This is a STUB. Full implementation requires macOS-native compilation.
-//! Compiles on Linux via cfg-gated empty impls that return friendly errors.
+//! **Status: STUB** — compiles on all platforms via `cfg!(target_os)` runtime
+//! checks that return `McpError::NotAvailable` with platform-specific guidance.
 //!
-//! Planned macOS-native dependencies (not yet added to Cargo.toml):
-//!   - `core-graphics` (CGDisplay, CGEvent, CGImage)
-//!   - `core-foundation` (CF types, run loops)
-//!   - `accessibility-sys` (AXUIElement APIs)
-//!   - `objc` / `objc-foundation` (Foundation bridging)
+//! ## Implementation roadmap
 //!
-//! Usage when macOS support lands:
-//!   ```ignore
-//!   // In Cargo.toml:
-//!   [target.'cfg(target_os = "macos")'.dependencies]
-//!   core-graphics = "0.23"
-//!   core-foundation = "0.9"
-//!   ```
-//!   ```ignore
-//!   // In src/providers/macos.rs (or lib.rs):
-//!   // #[cfg(feature = "macos")]
-//!   // extern crate core_graphics;
-//!   ```
+//! 1. Add to Cargo.toml:
+//!    ```toml
+//!    [target.'cfg(target_os = "macos")'.dependencies]
+//!    core-graphics = "0.23"
+//!    core-foundation = "0.9"
+//!    accessibility-sys = "0.2"
+//!    ```
+//! 2. Replace each `cfg!()` block in this file with the real implementation.
+//!    The TODO comments document the exact API calls needed per method.
+//! 3. Test on macOS 14+ (Sonoma) — Accessibility APIs require
+//!    `NSAccessibility` permission in System Preferences.
 
 use super::*;
 use anyhow::Result;

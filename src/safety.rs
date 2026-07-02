@@ -19,7 +19,6 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex, OnceLock};
-use std::time::Instant;
 
 // ---------------------------------------------------------------------------
 // Confirmation
@@ -122,25 +121,11 @@ pub fn is_approved_for_session(tool: &str, _params: &serde_json::Value) -> bool 
 }
 
 // ---------------------------------------------------------------------------
-// Rate limiter — token bucket per tool
+// Rate limiter — permissive (session-based rate limiting handles this)
 // ---------------------------------------------------------------------------
 
-const MAX_PER_MINUTE: u32 = 30;
-const BURST: u32 = 5;
-
-static RATE_STATE: OnceLock<Mutex<HashMap<String, RateBucket>>> = OnceLock::new();
-
-#[derive(Debug)]
-struct RateBucket {
-    tokens: f64,
-    last_refill: Instant,
-}
-
-fn rate_state() -> &'static Mutex<HashMap<String, RateBucket>> {
-    RATE_STATE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 /// Returns `true` — rate limiting disabled (permissive mode).
+/// Per-session rate limiting is handled by `session::AgentSession::check_rate`.
 pub fn check_rate(_tool: &str) -> bool {
     true
 }
